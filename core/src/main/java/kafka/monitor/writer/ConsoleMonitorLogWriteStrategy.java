@@ -26,7 +26,7 @@ public class ConsoleMonitorLogWriteStrategy implements IMonitorLogWriteStrategy 
                     log.getType(), log.getId(), log.getState(), prettierTimestamp(log.getTimestamp()), prettierTimestampNano(log.getTimestampNano()));
             return;
         }
-        logger.info("MonitorLog: Type: {}, Id: {}, Timestamp: {}, State: {}",
+        logger.info("MonitorLog: Type: {}, Id: {}, State: {}, Timestamp: {}",
                 log.getType(), log.getId(), log.getState(), prettierTimestamp(log.getTimestamp()));
     }
 

@@ -17,7 +17,7 @@
 
 package kafka.server
 
-import kafka.interceptor.{BrokerInterceptors, MonitorLoggingBrokerInterceptor}
+import kafka.interceptor.{BrokerInterceptors, MetadataRequestMonitorBrokerInterceptor, MonitorLoggingBrokerInterceptor}
 import kafka.migration.MigrationPropagator
 import kafka.network.{DataPlaneAcceptor, SocketServer}
 import kafka.raft.KafkaRaftManager
@@ -189,7 +189,9 @@ class ControllerServer(
       ))
       unusedBrokerInterceptors = new BrokerInterceptors(Vector.empty)
 
-      brokerInterceptors = new BrokerInterceptors(Vector.empty)
+      brokerInterceptors = new BrokerInterceptors(Vector(
+        new MetadataRequestMonitorBrokerInterceptor(logContext)
+      ))
       brokerInterceptors.init()
 
       tokenCache = new DelegationTokenCache(ScramMechanism.mechanismNames)

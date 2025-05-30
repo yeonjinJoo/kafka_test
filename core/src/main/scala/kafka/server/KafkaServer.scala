@@ -22,7 +22,7 @@ import kafka.common.GenerateBrokerIdException
 import kafka.controller.KafkaController
 import kafka.coordinator.group.GroupCoordinatorAdapter
 import kafka.coordinator.transaction.{ProducerIdManager, TransactionCoordinator}
-import kafka.interceptor.{BrokerInterceptors, MetadataRequestMonitorBrokerInterceptor, MonitorLoggingBrokerInterceptor}
+import kafka.interceptor.{BrokerInterceptors, MetadataRequestMonitorBrokerInterceptor, MonitorLoggingBrokerInterceptor, TopicCreateRequestMonitorBrokerInterceptor}
 import kafka.log.LogManager
 import kafka.log.remote.RemoteLogManager
 import kafka.metrics.KafkaMetricsReporter
@@ -380,13 +380,18 @@ class KafkaServer(
 
         // For testing purposes, backdoor for unused imports
         unusedBrokerInterceptors = new BrokerInterceptors(Vector(
-          new MonitorLoggingBrokerInterceptor(logContext)
+          new MonitorLoggingBrokerInterceptor(logContext),
+          new MetadataRequestMonitorBrokerInterceptor(logContext),
+          new TopicCreateRequestMonitorBrokerInterceptor(logContext),
         ))
         unusedBrokerInterceptors = new BrokerInterceptors(Vector.empty)
 
         brokerInterceptors = new BrokerInterceptors(Vector(
-          new MetadataRequestMonitorBrokerInterceptor(logContext)
+          //        new MonitorLoggingBrokerInterceptor(logContext),
+          //        new MetadataRequestMonitorBrokerInterceptor(logContext),
+          new TopicCreateRequestMonitorBrokerInterceptor(logContext),
         ))
+        //      brokerInterceptors = new BrokerInterceptors(Vector.empty)
         brokerInterceptors.init()
 
         // Create and start the socket server acceptor threads so that the bound port is known.

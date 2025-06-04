@@ -387,11 +387,11 @@ class KafkaServer(
         unusedBrokerInterceptors = new BrokerInterceptors(Vector.empty)
 
         brokerInterceptors = new BrokerInterceptors(Vector(
-          //        new MonitorLoggingBrokerInterceptor(logContext),
-          //        new MetadataRequestMonitorBrokerInterceptor(logContext),
+//                  new MonitorLoggingBrokerInterceptor(logContext),
+//                  new MetadataRequestMonitorBrokerInterceptor(logContext),
           new TopicCreateRequestMonitorBrokerInterceptor(logContext),
         ))
-        //      brokerInterceptors = new BrokerInterceptors(Vector.empty)
+//              brokerInterceptors = new BrokerInterceptors(Vector.empty)
         brokerInterceptors.init()
 
         // Create and start the socket server acceptor threads so that the bound port is known.

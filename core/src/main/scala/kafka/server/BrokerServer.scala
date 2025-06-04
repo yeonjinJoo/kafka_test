@@ -20,7 +20,7 @@ package kafka.server
 import kafka.cluster.EndPoint
 import kafka.coordinator.group.{CoordinatorLoaderImpl, CoordinatorPartitionWriter, GroupCoordinatorAdapter}
 import kafka.coordinator.transaction.{ProducerIdManager, TransactionCoordinator}
-import kafka.interceptor.{BrokerInterceptors, MetadataRequestMonitorBrokerInterceptor, MonitorLoggingBrokerInterceptor, TopicCreateRequestMonitorBrokerInterceptor}
+import kafka.interceptor.{BrokerInterceptors, MetadataRequestMonitorBrokerInterceptor, MonitorLoggingBrokerInterceptor, ProduceRequestMonitorBrokerInterceptor, TopicCreateRequestMonitorBrokerInterceptor}
 import kafka.log.LogManager
 import kafka.log.remote.RemoteLogManager
 import kafka.network.{DataPlaneAcceptor, SocketServer}
@@ -255,13 +255,15 @@ class BrokerServer(
         new MonitorLoggingBrokerInterceptor(logContext),
         new MetadataRequestMonitorBrokerInterceptor(logContext),
         new TopicCreateRequestMonitorBrokerInterceptor(logContext),
+        new ProduceRequestMonitorBrokerInterceptor(logContext)
       ))
       unusedBrokerInterceptors = new BrokerInterceptors(Vector.empty)
 
       brokerInterceptors = new BrokerInterceptors(Vector(
 //        new MonitorLoggingBrokerInterceptor(logContext),
-//        new MetadataRequestMonitorBrokerInterceptor(logContext),
+        new MetadataRequestMonitorBrokerInterceptor(logContext),
         new TopicCreateRequestMonitorBrokerInterceptor(logContext),
+        new ProduceRequestMonitorBrokerInterceptor(logContext)
       ))
 //      brokerInterceptors = new BrokerInterceptors(Vector.empty)
       brokerInterceptors.init()

@@ -10,14 +10,26 @@ public class MonitorLog {
 
   private final String state;
 
+  private final Integer priority;
+
   private final long timestamp;
 
   private final long timestampNano;
+
+  public MonitorLog(String type, String id, String state, Integer priority, long timestamp, long timestampNano) {
+    this.type = type;
+    this.id = id;
+    this.state = state;
+    this.priority = priority;
+    this.timestamp = timestamp;
+    this.timestampNano = timestampNano;
+  }
 
   public MonitorLog(String type, String id, String state, long timestamp, long timestampNano) {
     this.type = type;
     this.id = id;
     this.state = state;
+    this.priority = Integer.valueOf(0);
     this.timestamp = timestamp;
     this.timestampNano = timestampNano;
   }
@@ -33,6 +45,8 @@ public class MonitorLog {
   public String getState() {
     return state;
   }
+
+  public Integer priority() { return priority; }
 
   public long getTimestamp() {
     return timestamp;
@@ -55,7 +69,8 @@ public class MonitorLog {
     MonitorLog converted = (MonitorLog) oth;
     return Objects.equals(this.type, converted.type)
             && Objects.equals(this.id, converted.id)
-        && Objects.equals(this.state, converted.state);
+        && Objects.equals(this.state, converted.state)
+        && Objects.equals(this.priority, converted.priority);
   }
 
   public String toString() {
@@ -63,6 +78,7 @@ public class MonitorLog {
             "type='" + type + '\'' +
             ", id='" + id + '\'' +
             ", state='" + state + '\'' +
+            ", priority=" + priority +
             ", timestamp=" + timestamp +
             ", timestampNano=" + timestampNano +
             '}';

@@ -32,6 +32,8 @@ public class CsvMonitorLogWriteStrategy implements IMonitorLogWriteStrategy {
           .append(",")
           .append(log.getId())
           .append(",")
+          .append(log.priority())
+          .append(",")
           .append(String.valueOf(log.getTimestamp()))
           .append(",")
           .append(String.valueOf(log.getTimestampNano()))

@@ -7,8 +7,10 @@ import org.apache.kafka.common.protocol.ApiKeys
 import org.apache.kafka.common.record.MemoryRecords
 import org.apache.kafka.common.requests.ProduceRequest
 import org.apache.kafka.common.utils.LogContext
+import org.apache.kafka.common.record.Record
 
 import java.nio.charset.StandardCharsets
+import java.nio.ByteOrder
 
 class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends IBrokerInterceptor {
 
@@ -41,10 +43,20 @@ class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends
             } else {
               ""
             }
+
+            // Log에 priority 추가
+            val header: Header = record.headers().lastHeader("priority")
+            val priority: Int = if (header != null && header.value().length >= 4) {
+              ByteBuffer.wrap(header.value()).getInt()
+            } else {
+              0
+            }
+
             monitorQueue.enqueue(new MonitorLog(
               "PRODUCE",
               messageId,
               "REQUESTED",
+              priority,
               currentTime,
               currentTimeNano
             ))
@@ -74,10 +86,20 @@ class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends
             } else {
               ""
             }
+
+            // Log에 priority 추가
+            val header: Header = record.headers().lastHeader("priority")
+            val priority: Int = if (header != null && header.value().length >= 4) {
+              ByteBuffer.wrap(header.value()).getInt()
+            } else {
+              0
+            }
+
             monitorQueue.enqueue(new MonitorLog(
               "PRODUCE",
               messageId,
               "COMMITED",
+              priority,
               currentTime,
               currentTimeNano
             ))

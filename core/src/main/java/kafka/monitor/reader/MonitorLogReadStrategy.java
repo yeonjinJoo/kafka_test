@@ -36,18 +36,22 @@ public class MonitorLogReadStrategy implements IMonitorLogReadStrategy {
   }
 
   private MonitorLog parseMonitorLog(String str) {
+    // Log에 기록되는 순서. ConsoleMonitorLogWriteStrategy 확인. type, id, priority, timestamp, timestampNano, state 순서
     String[] splittedStr = str.split(",");
-    if (splittedStr.length < 5) {
+    if (splittedStr.length < 6) {
       return null;
     }
 
     try {
       String type = splittedStr[0];
       String messageId = splittedStr[1];
-      long timestamp = Long.parseLong(splittedStr[2]);
-      long timestampNano = Long.parseLong(splittedStr[3]);
-      String state = splittedStr[4];
-      return new MonitorLog(type, messageId, state, timestamp, timestampNano);
+      Integer priority = splittedStr[2];
+      long timestamp = Long.parseLong(splittedStr[3]);
+      long timestampNano = Long.parseLong(splittedStr[4]);
+      String state = splittedStr[5];
+
+      // MonitorLog 구조체 순서. priority & state 순서 주의
+      return new MonitorLog(type, messageId, state, priority, timestamp, timestampNano);
     } catch (Exception e) {
       return null;
     }

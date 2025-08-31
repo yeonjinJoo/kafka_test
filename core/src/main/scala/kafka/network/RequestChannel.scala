@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -51,14 +51,16 @@ object RequestChannel extends Logging {
   val ProcessorMetricTag = "processor"
 
   /**
-    * Deprecated protocol apis are logged at info level while the rest are logged at debug level.
-    * That makes it possible to enable the former without enabling latter.
-    */
+   * Deprecated protocol apis are logged at info level while the rest are logged at debug level.
+   * That makes it possible to enable the former without enabling latter.
+   */
   private def isRequestLoggingEnabled(header: RequestHeader): Boolean = requestLogger.underlying.isDebugEnabled ||
     (requestLogger.underlying.isInfoEnabled && header.isApiVersionDeprecated())
 
   sealed trait BaseRequest
+
   case object ShutdownRequest extends BaseRequest
+
   case object WakeupRequest extends BaseRequest
 
   class Metrics(enabledApis: Iterable[ApiKeys]) {
@@ -76,7 +78,7 @@ object RequestChannel extends Logging {
     def apply(metricName: String): RequestMetrics = metricsMap(metricName)
 
     def close(): Unit = {
-       metricsMap.values.foreach(_.removeMetrics())
+      metricsMap.values.foreach(_.removeMetrics())
     }
   }
 
@@ -247,7 +249,7 @@ object RequestChannel extends Logging {
             else RequestMetrics.consumerFetchMetricName
           Seq(specifiedMetricName, header.apiKey.name)
         } else if (header.apiKey == ApiKeys.ADD_PARTITIONS_TO_TXN && body[AddPartitionsToTxnRequest].allVerifyOnlyRequest) {
-            Seq(RequestMetrics.verifyPartitionsInTxnMetricName)
+          Seq(RequestMetrics.verifyPartitionsInTxnMetricName)
         } else {
           Seq(header.apiKey.name)
         }
@@ -361,20 +363,27 @@ class RequestChannel(val queueSize: Int,
                      time: Time,
                      val metrics: RequestChannel.Metrics,
                      val brokerInterceptors: BrokerInterceptors = new BrokerInterceptors(Vector.empty)) {
+
   import RequestChannel._
 
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
+  // requestQueue for basic request ( priority 0 )
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
   private val processors = new ConcurrentHashMap[Int, Processor]()
   private val requestQueueSizeMetricName = metricNamePrefix.concat(RequestQueueSizeMetric)
   private val responseQueueSizeMetricName = metricNamePrefix.concat(ResponseQueueSizeMetric)
   private val callbackQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
 
+  // requestQueue for priority 1 ~ 3
+  private val requestQueueP1 = new ArrayBlockingQueue[BaseRequest](queueSize)
+  private val requestQueueP2 = new ArrayBlockingQueue[BaseRequest](queueSize)
+  private val requestQueueP3 = new ArrayBlockingQueue[BaseRequest](queueSize)
+
   metricsGroup.newGauge(requestQueueSizeMetricName, () => requestQueue.size)
 
   metricsGroup.newGauge(responseQueueSizeMetricName, () => {
-    processors.values.asScala.foldLeft(0) {(total, processor) =>
+    processors.values.asScala.foldLeft(0) { (total, processor) =>
       total + processor.responseQueueSize
     }
   })
@@ -395,12 +404,28 @@ class RequestChannel(val queueSize: Int,
   /** Send a request to be handled, potentially blocking until there is room in the queue for the request */
   def sendRequest(request: RequestChannel.Request): Unit = {
     requestQueue.put(request)
+  } // 기존의 다양한 요청 ( topic creation, deletion 등. priority = 0 )은 이 함수를 통해 requestQueue에 넣도록.
+
+  // Produce 요청은 이 함수에서 제어. client 측에서 priority를 생성해서 보내므로 1 ~ 3 인 request만 존재
+  def sendRequest(request: RequestChannel.Request, priority: Int): Unit = {
+    if (priority == 3) {
+      requestQueueP3.put(request)
+    }
+    else if (priority == 2) {
+      requestQueueP2.put(request)
+    }
+    else if (priority == 1) {
+      requestQueueP1.put(request)
+    }
+    else { // priority 생성하지 않는 script 사용하는 경우 대비. priority = 0
+      sendRequest(request)
+    }
   }
 
   def closeConnection(
-    request: RequestChannel.Request,
-    errorCounts: java.util.Map[Errors, Integer]
-  ): Unit = {
+                       request: RequestChannel.Request,
+                       errorCounts: java.util.Map[Errors, Integer]
+                     ): Unit = {
     // This case is used when the request handler has encountered an error, but the client
     // does not expect a response (e.g. when produce request has acks set to 0)
     updateErrorMetrics(request.header.apiKey, errorCounts.asScala)
@@ -408,10 +433,10 @@ class RequestChannel(val queueSize: Int,
   }
 
   def sendResponse(
-    request: RequestChannel.Request,
-    response: AbstractResponse,
-    onComplete: Option[Send => Unit]
-  ): Unit = {
+                    request: RequestChannel.Request,
+                    response: AbstractResponse,
+                    onComplete: Option[Send => Unit]
+                  ): Unit = {
     updateErrorMetrics(request.header.apiKey, response.errorCounts.asScala)
     sendResponse(new RequestChannel.SendResponse(
       request,
@@ -477,8 +502,8 @@ class RequestChannel(val queueSize: Int,
   }
 
   /** Get the next request or block until specified time has elapsed
-   *  Check the callback queue and execute first if present since these
-   *  requests have already waited in line. */
+   * Check the callback queue and execute first if present since these
+   * requests have already waited in line. */
   def receiveRequest(timeout: Long): RequestChannel.BaseRequest = {
     val callbackRequest = callbackQueue.poll()
     if (callbackRequest != null)
@@ -623,7 +648,7 @@ class RequestMetrics(name: String) {
       else {
         synchronized {
           if (meter == null)
-             meter = metricsGroup.newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
+            meter = metricsGroup.newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
           meter
         }
       }

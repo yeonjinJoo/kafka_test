@@ -7,10 +7,13 @@ import org.apache.kafka.common.protocol.ApiKeys
 import org.apache.kafka.common.record.MemoryRecords
 import org.apache.kafka.common.requests.ProduceRequest
 import org.apache.kafka.common.utils.LogContext
-import org.apache.kafka.common.record.Record
+//import org.apache.kafka.common.record.Record
 
 import java.nio.charset.StandardCharsets
-import java.nio.ByteOrder
+//import java.nio.ByteOrder
+
+import org.apache.kafka.common.header.Header
+import java.nio.ByteBuffer
 
 class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends IBrokerInterceptor {
 
@@ -45,12 +48,16 @@ class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends
             }
 
             // Log에 priority 추가
-            val header: Header = record.headers().lastHeader("priority")
-            val priority: Int = if (header != null && header.value().length >= 4) {
-              ByteBuffer.wrap(header.value()).getInt()
-            } else {
-              0
-            }
+            // val header: Header = record.headers().lastHeader("priority")
+            val headers: Array[Header] = record.headers()
+            val header: Option[Header] = headers.reverse.find(_.key() == "priority")
+
+            val priority: Int =
+              header
+                .map(_.value())                                       // Option[Array[Byte]]
+                .filter(arr => arr != null && arr.length >= 4)        // 충분한 길이 확인 ( int로 변환 위함 )
+                .map(arr => ByteBuffer.wrap(arr).getInt())            // 바이트를 Int로
+                .getOrElse(0)                                         // 없으면 기본값 0
 
             monitorQueue.enqueue(new MonitorLog(
               "PRODUCE",
@@ -88,12 +95,22 @@ class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends
             }
 
             // Log에 priority 추가
-            val header: Header = record.headers().lastHeader("priority")
-            val priority: Int = if (header != null && header.value().length >= 4) {
-              ByteBuffer.wrap(header.value()).getInt()
-            } else {
-              0
-            }
+            // val header: Header = record.headers().lastHeader("priority")
+            val headers: Array[Header] = record.headers()
+            val header: Option[Header] = headers.reverse.find(_.key() == "priority")
+
+//            val priority: Int = if (header != null && header.value().length >= 4) {
+//              ByteBuffer.wrap(header.value()).getInt()
+//            } else {
+//              0
+//            }
+
+            val priority: Int =
+              header
+                .map(_.value())
+                .filter(arr => arr != null && arr.length >= 4)
+                .map(arr => ByteBuffer.wrap(arr).getInt())
+                .getOrElse(0)
 
             monitorQueue.enqueue(new MonitorLog(
               "PRODUCE",

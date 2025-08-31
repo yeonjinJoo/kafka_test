@@ -1,7 +1,9 @@
 package kafka.monitor.writer;
 
 import kafka.monitor.MonitorLog;
+
 import org.apache.kafka.common.utils.LogContext;
+
 import org.slf4j.Logger;
 
 public class ConsoleMonitorLogWriteStrategy implements IMonitorLogWriteStrategy {

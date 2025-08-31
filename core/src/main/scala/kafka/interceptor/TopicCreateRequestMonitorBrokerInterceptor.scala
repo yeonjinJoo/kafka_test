@@ -32,6 +32,7 @@ class TopicCreateRequestMonitorBrokerInterceptor(val logContext: LogContext) ext
           "CREATE_TOPIC",
           String.join(",", createTopicsRequest.data().topics().stream().map(_.name()).collect(Collectors.toList())),
           "REQUESTED",
+          Integer.valueOf(0),
           currentTime,
           currentTimeNano
         )
@@ -44,6 +45,7 @@ class TopicCreateRequestMonitorBrokerInterceptor(val logContext: LogContext) ext
           "DELETE_TOPIC",
           String.join(",", deleteTopicsRequest.data().topics().stream().map(_.name()).collect(Collectors.toList())),
           "REQUESTED",
+          Integer.valueOf(0),
           currentTime,
           currentTimeNano
         )
@@ -64,6 +66,7 @@ class TopicCreateRequestMonitorBrokerInterceptor(val logContext: LogContext) ext
           "CREATE_TOPIC",
           String.join(",", createTopicsRequest.data().topics().stream().map(_.name()).collect(Collectors.toList())),
           "COMPLETED",
+          Integer.valueOf(0),
           currentTime,
           currentTimeNano
         )
@@ -76,6 +79,7 @@ class TopicCreateRequestMonitorBrokerInterceptor(val logContext: LogContext) ext
           "DELETE_TOPIC",
           String.join(",", deleteTopicsRequest.data().topics().stream().map(_.name()).collect(Collectors.toList())),
           "COMPLETED",
+          Integer.valueOf(0),
           currentTime,
           currentTimeNano
         )

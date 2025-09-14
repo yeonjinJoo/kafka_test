@@ -368,7 +368,7 @@ class RequestChannel(val queueSize: Int,
 
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
-  // requestQueue for basic request ( priority 0 )
+  // requestQueue for basic request ( priority 0 ) - 곧 삭제
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
   private val processors = new ConcurrentHashMap[Int, Processor]()
   private val requestQueueSizeMetricName = metricNamePrefix.concat(RequestQueueSizeMetric)
@@ -403,8 +403,8 @@ class RequestChannel(val queueSize: Int,
 
   /** Send a request to be handled, potentially blocking until there is room in the queue for the request */
   def sendRequest(request: RequestChannel.Request): Unit = {
-    requestQueue.put(request)
-  } // 기존의 다양한 요청 ( topic creation, deletion 등. priority = 0 )은 이 함수를 통해 requestQueue에 넣도록.
+    requestQueueP2.put(request)
+  } // 기존의 다양한 요청 ( topic creation, deletion 등 )은 이 함수를 통해 requestQueueP2에 넣도록.
 
   // Produce 요청은 이 함수에서 제어. client 측에서 priority를 생성해서 보내므로 1 ~ 3 인 request만 존재
   def sendRequest(request: RequestChannel.Request, priority: Int): Unit = {
@@ -416,9 +416,6 @@ class RequestChannel(val queueSize: Int,
     }
     else if (priority == 1) {
       requestQueueP1.put(request)
-    }
-    else { // priority 생성하지 않는 script 사용하는 경우 대비. priority = 0
-      sendRequest(request)
     }
   }
 
@@ -504,6 +501,8 @@ class RequestChannel(val queueSize: Int,
   /** Get the next request or block until specified time has elapsed
    * Check the callback queue and execute first if present since these
    * requests have already waited in line. */
+
+  // 이 부분에 priority 스케쥴링 알고리즘 추가 필요.
   def receiveRequest(timeout: Long): RequestChannel.BaseRequest = {
     val callbackRequest = callbackQueue.poll()
     if (callbackRequest != null)

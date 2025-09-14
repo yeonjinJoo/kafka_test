@@ -57,6 +57,10 @@ import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters._
 import scala.util.control.ControlThrowable
 
+import org.apache.kafka.common.requests.ProduceRequest
+import org.apache.kafka.common.record.MemoryRecords
+import org.apache.kafka.common.header.Header
+
 /**
  * Handles new connections, requests and responses to and from broker.
  * Kafka supports two types of request planes :
@@ -1139,6 +1143,33 @@ private[kafka] class Processor(
     }
   }
 
+  private def extractPriorityFromFirstRecord(req: RequestChannel.Request, header: RequestHeader): Int = {
+    if (header.apiKey != ApiKeys.PRODUCE) return 2 // Produce 요청이 아닌 경우 중간 Queue로
+
+    val produceRequest = req.body[ProduceRequest]
+
+    produceRequest.data().topicData().forEach(topic => topic.partitionData.forEach { partition =>
+      val memoryRecords: MemoryRecords = partition.records.asInstanceOf[MemoryRecords]
+      memoryRecords.batches.forEach(batch => {
+        batch.forEach(record => {
+          // priority 가져오기
+          val headers: Array[Header] = record.headers()
+          //          val prioriHeader: Option[Header] = headers.reverse.find(_.key() == "priority")
+
+          return headers.reverse
+            .find(_.key() == "priority")
+            .map(_.value()) // Option[Array[Byte]]
+            .filter(arr => arr != null && arr.length >= 4) // 충분한 길이 확인 ( int로 변환 위함 )
+            .map(arr => ByteBuffer.wrap(arr).getInt()) // 바이트를 Int로
+            .getOrElse(0) // 없으면 기본값 0 ( 이때 에러 처리하기 )
+
+          // batch에 하나의 record만 들어오기 때문에 하나 priority 확인후 return
+        })
+      })
+    })
+    return 0
+  }
+
   private def processCompletedReceives(): Unit = {
     selector.completedReceives.forEach { receive =>
       try {
@@ -1178,34 +1209,10 @@ private[kafka] class Processor(
                 brokerInterceptors.beforeSendRequestToQueue(req, connectionId)
 
                 // PRODUCE인 경우 record의 priority 확인 후, priority 담아 sendRequest
-                // 아닌 경우 기존의 sendRequest 함수 사용
-                if (header.apiKey == ApiKeys.PRODUCE) {
-                  val produceRequest = request.body[ProduceRequest]
-                  val priority: Int = 0
-                  produceRequest.data().topicData().forEach(topic => topic.partitionData.forEach { partition =>
-                    val memoryRecords: MemoryRecords = partition.records.asInstanceOf[MemoryRecords]
-                    memoryRecords.batches.forEach(batch => {
-                      batch.forEach(record => {
-                        // priority 가져오기
-                        val headers: Array[Header] = record.headers()
-                        val header: Option[Header] = headers.reverse.find(_.key() == "priority")
-
-                        priority =
-                          header
-                            .map(_.value()) // Option[Array[Byte]]
-                            .filter(arr => arr != null && arr.length >= 4) // 충분한 길이 확인 ( int로 변환 위함 )
-                            .map(arr => ByteBuffer.wrap(arr).getInt()) // 바이트를 Int로
-                            .getOrElse(0) // 없으면 기본값 0
-
-                        break() // batch에 하나의 record만 들어오기 때문에 하나 priority 확인후 break
-                      })
-                    })
-                  })
-                  requestChannel.sendRequest(req, priority)
-                }
-                else {
-                  requestChannel.sendRequest(req)
-                }
+                // 아닌 경우 중간 priority Queue로 삽입
+                val priority = extractPriorityFromFirstRecord(req, header)
+                requestChannel.sendRequest(req, priority)
+                //                requestChannel.sendRequest(req)
 
                 selector.mute(connectionId)
                 handleChannelMuteEvent(connectionId, ChannelMuteEvent.REQUEST_RECEIVED)

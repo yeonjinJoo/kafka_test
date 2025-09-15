@@ -25,6 +25,8 @@ class TimeCheck {
     }
 
     // passNormalization 함수 호출. - 일정 시간 지났다면 모든 Queue의 pass를 min pass 기준으로 shift해주는. min pass가 0이 되도록.
-    sc.passNormalization()
+    if (isTimeMetThreshold) {
+      sc.passNormalization()
+    }
   }
 }

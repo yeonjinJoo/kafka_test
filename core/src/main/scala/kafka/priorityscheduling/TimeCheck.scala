@@ -5,9 +5,9 @@ import kafka.priorityscheduling.StarvationCheck
 
 class TimeCheck {
   // 변수 정의
-  private var lastNormalizationTime = 0L // last pass normalization 된 시간
+  private var lastNormalizationTime: Long = 0L // last pass normalization 된 시간
   private val lock = new ReentrantLock()
-  private val timeThreshold = 0 // time threshold 값 정의 - 그냥 값임. 읽어오기만 o.
+  private val timeThreshold: Long = 0L // time threshold 값 정의 - 그냥 값임. 읽어오기만 o.
 
   // def 정의
   // timeThreshold 도달 시 passNormalization 실행

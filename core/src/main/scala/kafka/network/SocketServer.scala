@@ -1154,7 +1154,6 @@ private[kafka] class Processor(
         batch.forEach(record => {
           // priority 가져오기
           val headers: Array[Header] = record.headers()
-          //          val prioriHeader: Option[Header] = headers.reverse.find(_.key() == "priority")
 
           return headers.reverse
             .find(_.key() == "priority")

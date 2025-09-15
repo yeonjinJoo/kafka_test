@@ -388,6 +388,13 @@ class RequestChannel(val queueSize: Int,
     }
   })
 
+  // 다른 class에서 queue size 체크 위해 getter 추가
+  def getRequestQueueP1Size(): Int = requestQueueP1.size
+
+  def getRequestQueueP2Size(): Int = requestQueueP2.size
+
+  def getRequestQueueP3Size(): Int = requestQueueP3.size
+
   def addProcessor(processor: Processor): Unit = {
     if (processors.putIfAbsent(processor.id, processor) != null)
       warn(s"Unexpected processor with processorId ${processor.id}")

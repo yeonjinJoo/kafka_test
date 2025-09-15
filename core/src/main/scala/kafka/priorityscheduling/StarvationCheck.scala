@@ -1,17 +1,21 @@
 package kafka.priorityscheduling
 
 import kafka.network.RequestChannel
+import java.util.concurrent.locks.ReentrantLock
 
 class StarvationCheck {
-  // 변수 정의
   private val pass = new Array[Long](3) // queue 별로 pass 값 0으로 정의 - lock 필요
-  private val stride = new Array[Float](3) // 비율에 맞게 변경 필요. queue 별로 각자 다른 stride 값 정의. lock 필요 x. 읽어오기만 o.
+  private val stride = new Array[Long](3) // 비율에 맞게 변경 필요. queue 별로 각자 다른 stride 값 정의. lock 필요 x. 읽어오기만 o.
   private val starvationCount = new Array[Long](3) //  queue 별로 starvation count 값 정의
   private val starvationThreshold: Long = 0 // 설정 필요 - 그냥 값임. 읽어오기만 o.
   private val lock = new ReentrantLock()
-  // 변수를 array로 정의하는 게 나을 것 같기도 하다. 다 어느 정도 한번에 확인하고, change 하니까. array가 맞겠네. 어차피 array 길이 3이니까.
 
-  // queue 별로 비어있는지 확인하고, 비어있지않다면 모든 큐 starvation count에 대해 증가 함수
+  /**
+   * 각 큐가 비어 있지 않은 경우, 해당 큐의 starvation 카운트를 1씩 증가시킨다.
+   *
+   * @param rc RequestChannel – 각 큐의 요청 개수를 조회
+   * @return 없음
+   */
   def increaseStarvationCount(rc: RequestChannel): Unit = {
     lock.lock()
     try {
@@ -23,7 +27,13 @@ class StarvationCheck {
     }
   }
 
-  // 모든 queue에 대해서 starvation 발생한 queue가 있는지 확인하고, threshold를 넘었다면 해당 queue의 pass를 min pass로 조정
+  /**
+   * 모든 큐에 대해 starvation이 발생했는지 확인한 뒤,
+   * starvationThreshold를 초과한 큐의 pass 값을 현재 전체 큐 중 최소 pass 값으로 조정한다.
+   *
+   * @param 없음
+   * @return 없음
+   */
   def starvationBoosting(): Unit = {
     lock.lock()
     try {
@@ -35,10 +45,17 @@ class StarvationCheck {
     } finally {
       lock.unlock()
     }
-
   }
 
-  // queue가 비어있지 않으면서, pass가 가장 작은 queue 어느건지 확인하고 그 starvation count 값 0으로 바꾸고 pass += stride 하는 함수 필요. return 값은 몇번째 큐인지 int - 그 큐를 실행하기 위함
+  /**
+   * 현재 3개의 큐 중 pass 값이 가장 작은 큐를 선택한다.
+   * - 비어있는 큐는 제외
+   * - 선택된 큐의 starvationCount를 0으로 초기화하고
+   * stride 값만큼 pass를 증가시킨다.
+   *
+   * @param rc RequestChannel – 각 큐의 요청 개수를 조회
+   * @return 1~3 : 선택된 큐 번호, 0 : 모든 큐가 비어 있는 경우
+   */
   // 그 어떤 Queue에도 요청이 없는 경우 처리 필요. Kafka는 해당 Queue에서 계속 대기..?하는데... 이 경우는 Queue가 3개라
   def getMinPassQueueNum(rc: RequestChannel): Int = {
     lock.lock()
@@ -72,7 +89,16 @@ class StarvationCheck {
     }
   }
 
-  // queue가 비었는지 여부와는 상관없이, 가장 작은 min pass 값 구해오기 - starvation인 큐 살려주기 위함
+  /**
+   * 현재 3개의 큐의 pass 중 가장 작은 pass 값을 반환한다.
+   * - 큐가 비어있는지 여부는 상관 x
+   *
+   * Note: 이 메서드 내부에서는 별도의 락을 획득하지 않는다.
+   * 이 메서드는 외부에서 이미 락을 잡은 상태에서 호출해야 한다.
+   *
+   * @param 없음
+   * @return 모든 큐의 pass 값 중 최소값, 0 : 모든 pass 값이 초기값(Long.MaxValue)인 경우
+   */
   def getMinPassValue(): Long = {
     // 이 함수 접근할 때는, 이미 다른 함수에서 lock 잡고 접근하기 때문에 lock 필요 x
     var minPassValue = Long.MaxValue
@@ -82,7 +108,13 @@ class StarvationCheck {
     if (minPassValue == Long.MaxValue) 0L else minPassValue
   }
 
-  // min pass가 0이 되도록 shift 해주는 함수
+  /**
+   * 모든 큐의 pass 값을 최소 pass 값 만큼 일괄 감소시켜,
+   * 결과적으로 최소 pass 값이 0이 되도록 정규화한다.
+   *
+   * @param 없음
+   * @return 없음
+   */
   def passNormalization(): Unit = {
     lock.lock()
     try {
@@ -94,6 +126,4 @@ class StarvationCheck {
       lock.unlock()
     }
   }
-
-  // def 정의
 }

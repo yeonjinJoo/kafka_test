@@ -16,8 +16,8 @@ class TimeCheck {
    * @return 없음
    */
   def checkTimeMetThreshold(sc: StarvationCheck): Unit = {
-    lock.lock()
     var isTimeMetThreshold = false
+    lock.lock()
     try {
       val currentTime = System.currentTimeMillis()
       if (currentTime - lastNormalizationTime >= timeThreshold) {

@@ -11,17 +11,17 @@ class StarvationCheck {
   private val lock = new ReentrantLock()
 
   /**
-   * 각 큐가 비어 있지 않은 경우, 해당 큐의 starvation 카운트를 1씩 증가시킨다.
+   * 각 큐가 비어 있지 않고 이번에 선택되지 않은 경우, 해당 큐의 starvation 카운트를 1씩 증가시킨다.
    *
    * @param rc RequestChannel – 각 큐의 요청 개수를 조회
    * @return 없음
    */
-  def increaseStarvationCount(rc: RequestChannel): Unit = {
+  def increaseStarvationCount(rc: RequestChannel, selected: Int): Unit = {
     lock.lock()
     try {
-      if (rc.getRequestQueueP1Size() != 0) starvationCount(0) += 1
-      if (rc.getRequestQueueP2Size() != 0) starvationCount(1) += 1
-      if (rc.getRequestQueueP3Size() != 0) starvationCount(2) += 1
+      if (selected != 1 && rc.getRequestQueueP1Size() != 0) starvationCount(0) += 1
+      if (selected != 2 && rc.getRequestQueueP2Size() != 0) starvationCount(1) += 1
+      if (selected != 3 && rc.getRequestQueueP3Size() != 0) starvationCount(2) += 1
     } finally {
       lock.unlock()
     }
@@ -99,7 +99,7 @@ class StarvationCheck {
    * @param 없음
    * @return 모든 큐의 pass 값 중 최소값, 0 : 모든 pass 값이 초기값(Long.MaxValue)인 경우
    */
-  def getMinPassValue(): Long = {
+  private def getMinPassValue(): Long = {
     // 이 함수 접근할 때는, 이미 다른 함수에서 lock 잡고 접근하기 때문에 lock 필요 x
     var minPassValue = Long.MaxValue
     for (i <- 0 until 3) {

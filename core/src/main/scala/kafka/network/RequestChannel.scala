@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.typesafe.scalalogging.Logger
 import com.yammer.metrics.core.{Histogram, Meter}
 import kafka.interceptor.BrokerInterceptors
+import kafka.priorityscheduling.{StarvationCheck, TimeCheck}
 import kafka.network
 import kafka.server.{KafkaConfig, RequestLocal}
 import kafka.utils.{Logging, Pool}
@@ -362,7 +363,9 @@ class RequestChannel(val queueSize: Int,
                      val metricNamePrefix: String,
                      time: Time,
                      val metrics: RequestChannel.Metrics,
-                     val brokerInterceptors: BrokerInterceptors = new BrokerInterceptors(Vector.empty)) {
+                     val brokerInterceptors: BrokerInterceptors = new BrokerInterceptors(Vector.empty),
+                     val starvationCheck: StarvationCheck = new StarvationCheck(),
+                     val timeCheck: TimeCheck = new TimeCheck()) {
 
   import RequestChannel._
 

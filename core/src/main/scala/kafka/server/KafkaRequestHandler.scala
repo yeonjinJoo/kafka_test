@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -35,6 +35,7 @@ import scala.collection.mutable
 
 trait ApiRequestHandler {
   def handle(request: RequestChannel.Request, requestLocal: RequestLocal): Unit
+
   def tryCompleteActions(): Unit = {}
 }
 
@@ -45,6 +46,7 @@ object KafkaRequestHandler {
 
   // For testing
   @volatile private var bypassThreadCheck = false
+
   def setBypassThreadCheck(bypassCheck: Boolean): Unit = {
     bypassThreadCheck = bypassCheck
   }
@@ -53,11 +55,12 @@ object KafkaRequestHandler {
    * Creates a wrapped callback to be executed synchronously on the calling request thread or asynchronously
    * on an arbitrary request thread.
    * NOTE: this function must be originally called from a request thread.
+   *
    * @param asyncCompletionCallback A callback method that we intend to call from the current thread or in another
    *                                thread after an asynchronous action completes. The RequestLocal passed in must
    *                                belong to the request handler thread that is executing the callback.
-   * @param requestLocal The RequestLocal for the current request handler thread in case we need to execute the callback
-   *                     function synchronously from the calling thread.
+   * @param requestLocal            The RequestLocal for the current request handler thread in case we need to execute the callback
+   *                                function synchronously from the calling thread.
    * @return Wrapped callback will either immediately execute `asyncCompletionCallback` or schedule it on an arbitrary request thread
    *         depending on where it is called
    */
@@ -88,16 +91,16 @@ object KafkaRequestHandler {
  * A thread that answers kafka requests.
  */
 class KafkaRequestHandler(
-  id: Int,
-  brokerId: Int,
-  val aggregateIdleMeter: Meter,
-  val totalHandlerThreads: AtomicInteger,
-  val requestChannel: RequestChannel,
-  apis: ApiRequestHandler,
-  time: Time,
-  nodeName: String = "broker",
-  val brokerInterceptors: BrokerInterceptors = new BrokerInterceptors(Vector.empty)
-) extends Runnable with Logging {
+                           id: Int,
+                           brokerId: Int,
+                           val aggregateIdleMeter: Meter,
+                           val totalHandlerThreads: AtomicInteger,
+                           val requestChannel: RequestChannel,
+                           apis: ApiRequestHandler,
+                           time: Time,
+                           nodeName: String = "broker",
+                           val brokerInterceptors: BrokerInterceptors = new BrokerInterceptors(Vector.empty)
+                         ) extends Runnable with Logging {
   this.logIdent = s"[Kafka Request Handler $id on ${nodeName.capitalize} $brokerId], "
   private val shutdownComplete = new CountDownLatch(1)
   private val requestLocal = RequestLocal.withThreadConfinedCaching
@@ -137,7 +140,7 @@ class KafkaRequestHandler(
             } else {
               originalRequest.callbackRequestDequeueTimeNanos = Some(time.nanoseconds())
             }
-            
+
             threadCurrentRequest.set(originalRequest)
             callback.fun(requestLocal)
           } catch {
@@ -158,7 +161,7 @@ class KafkaRequestHandler(
             request.requestDequeueTimeNanos = endTime
             trace(s"Kafka request handler $id on broker $brokerId handling request $request")
             threadCurrentRequest.set(request)
-//            brokerInterceptors.beforeHandleRequest(request)
+            //            brokerInterceptors.beforeHandleRequest(request)
             apis.handle(request, requestLocal)
           } catch {
             case e: FatalExitError =>
@@ -170,7 +173,7 @@ class KafkaRequestHandler(
             request.releaseBuffer()
           }
 
-        case RequestChannel.WakeupRequest => 
+        case RequestChannel.WakeupRequest =>
           // We should handle this in receiveRequest by polling callbackQueue.
           warn("Received a wakeup request outside of typical usage.")
 
@@ -197,16 +200,16 @@ class KafkaRequestHandler(
 }
 
 class KafkaRequestHandlerPool(
-  val brokerId: Int,
-  val requestChannel: RequestChannel,
-  val apis: ApiRequestHandler,
-  time: Time,
-  numThreads: Int,
-  requestHandlerAvgIdleMetricName: String,
-  logAndThreadNamePrefix : String,
-  nodeName: String = "broker",
-  val brokerInterceptors: BrokerInterceptors = new BrokerInterceptors(Vector.empty)
-) extends Logging {
+                               val brokerId: Int,
+                               val requestChannel: RequestChannel,
+                               val apis: ApiRequestHandler,
+                               time: Time,
+                               numThreads: Int,
+                               requestHandlerAvgIdleMetricName: String,
+                               logAndThreadNamePrefix: String,
+                               nodeName: String = "broker",
+                               val brokerInterceptors: BrokerInterceptors = new BrokerInterceptors(Vector.empty)
+                             ) extends Logging {
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
   val threadPoolSize: AtomicInteger = new AtomicInteger(numThreads)

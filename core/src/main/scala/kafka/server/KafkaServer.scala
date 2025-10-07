@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,6 +23,7 @@ import kafka.controller.KafkaController
 import kafka.coordinator.group.GroupCoordinatorAdapter
 import kafka.coordinator.transaction.{ProducerIdManager, TransactionCoordinator}
 import kafka.interceptor.{BrokerInterceptors, MetadataRequestMonitorBrokerInterceptor, MonitorLoggingBrokerInterceptor, ProduceRequestMonitorBrokerInterceptor, TopicCreateRequestMonitorBrokerInterceptor}
+import kafka.priorityscheduling.{StarvationCheck, TimeCheck}
 import kafka.log.LogManager
 import kafka.log.remote.RemoteLogManager
 import kafka.metrics.KafkaMetricsReporter
@@ -111,11 +112,11 @@ object KafkaServer {
  * to start up and shutdown a single Kafka node.
  */
 class KafkaServer(
-  val config: KafkaConfig,
-  time: Time = Time.SYSTEM,
-  threadNamePrefix: Option[String] = None,
-  enableForwarding: Boolean = false
-) extends KafkaBroker with Server {
+                   val config: KafkaConfig,
+                   time: Time = Time.SYSTEM,
+                   threadNamePrefix: Option[String] = None,
+                   enableForwarding: Boolean = false
+                 ) extends KafkaBroker with Server {
 
   private val startupComplete = new AtomicBoolean(false)
   private val isShuttingDown = new AtomicBoolean(false)
@@ -135,6 +136,10 @@ class KafkaServer(
 
   var unusedBrokerInterceptors: BrokerInterceptors = _
   var brokerInterceptors: BrokerInterceptors = _
+
+  // starvationCheck & timeCheck 객체 생성 ( broker에 1개 존재하는 객체 )
+  var starvationCheck: StarvationCheck = _
+  var timeCheck: TimeCheck = _
 
   var authorizer: Option[Authorizer] = None
   @volatile var socketServer: SocketServer = _
@@ -388,13 +393,17 @@ class KafkaServer(
         unusedBrokerInterceptors = new BrokerInterceptors(Vector.empty)
 
         brokerInterceptors = new BrokerInterceptors(Vector(
-//          new MonitorLoggingBrokerInterceptor(logContext),
+          //          new MonitorLoggingBrokerInterceptor(logContext),
           new MetadataRequestMonitorBrokerInterceptor(logContext),
           new TopicCreateRequestMonitorBrokerInterceptor(logContext),
           new ProduceRequestMonitorBrokerInterceptor(logContext)
         ))
-//              brokerInterceptors = new BrokerInterceptors(Vector.empty)
+        //              brokerInterceptors = new BrokerInterceptors(Vector.empty)
         brokerInterceptors.init()
+
+        // Initialize StarvationCheck class & TimeCheck class
+        starvationCheck = new StarvationCheck()
+        timeCheck = new TimeCheck()
 
         // Create and start the socket server acceptor threads so that the bound port is known.
         // Delay starting processors until the end of the initialization sequence to ensure
@@ -402,7 +411,7 @@ class KafkaServer(
         //
         // Note that we allow the use of KRaft mode controller APIs when forwarding is enabled
         // so that the Envelope request is exposed. This is only used in testing currently.
-        socketServer = new SocketServer(config, metrics, time, credentialProvider, apiVersionManager, brokerInterceptors)
+        socketServer = new SocketServer(config, metrics, time, credentialProvider, apiVersionManager, brokerInterceptors, starvationCheck, timeCheck)
 
         // Start alter partition manager based on the IBP version
         alterPartitionManager = if (config.interBrokerProtocolVersion.isAlterPartitionSupported) {
@@ -429,7 +438,7 @@ class KafkaServer(
         val brokerEpoch = zkClient.registerBroker(brokerInfo)
 
         /* start token manager */
-        tokenManager = new DelegationTokenManagerZk(config, tokenCache, time , zkClient)
+        tokenManager = new DelegationTokenManagerZk(config, tokenCache, time, zkClient)
         tokenManager.startup()
 
         /* start kafka controller */
@@ -646,10 +655,10 @@ class KafkaServer(
 
         /* start dynamic config manager */
         dynamicConfigHandlers = Map[String, ConfigHandler](ConfigType.TOPIC -> new TopicConfigHandler(replicaManager, config, quotaManagers, Some(kafkaController)),
-                                                           ConfigType.CLIENT -> new ClientIdConfigHandler(quotaManagers),
-                                                           ConfigType.USER -> new UserConfigHandler(quotaManagers, credentialProvider),
-                                                           ConfigType.BROKER -> new BrokerConfigHandler(config, quotaManagers),
-                                                           ConfigType.IP -> new IpConfigHandler(socketServer.connectionQuotas))
+          ConfigType.CLIENT -> new ClientIdConfigHandler(quotaManagers),
+          ConfigType.USER -> new UserConfigHandler(quotaManagers, credentialProvider),
+          ConfigType.BROKER -> new BrokerConfigHandler(config, quotaManagers),
+          ConfigType.IP -> new IpConfigHandler(socketServer.connectionQuotas))
 
         // Create the config manager. start listening to notifications
         dynamicConfigManager = new ZkConfigManager(zkClient, dynamicConfigHandlers)
@@ -732,7 +741,7 @@ class KafkaServer(
           logManager.getLog(tp).foreach { log =>
             log.updateLogStartOffsetFromRemoteTier(remoteLogStartOffset)
           }
-      },
+        },
         brokerTopicStats, metrics))
     } else {
       None
@@ -880,7 +889,7 @@ class KafkaServer(
           // 1. Find the controller and establish a connection to it.
           // If the controller id or the broker registration are missing, we sleep and retry (if there are remaining retries)
           metadataCache.getControllerId match {
-            case Some(controllerId: ZkCachedControllerId)  =>
+            case Some(controllerId: ZkCachedControllerId) =>
               metadataCache.getAliveBrokerNode(controllerId.id, config.interBrokerListenerName) match {
                 case Some(broker) =>
                   // if this is the first attempt, if the controller has changed or if an exception was thrown in a previous
@@ -917,10 +926,10 @@ class KafkaServer(
                 else 3
 
               val controlledShutdownRequest = new ControlledShutdownRequest.Builder(
-                  new ControlledShutdownRequestData()
-                    .setBrokerId(config.brokerId)
-                    .setBrokerEpoch(kafkaController.brokerEpoch),
-                    controlledShutdownApiVersion)
+                new ControlledShutdownRequestData()
+                  .setBrokerId(config.brokerId)
+                  .setBrokerEpoch(kafkaController.brokerEpoch),
+                controlledShutdownApiVersion)
               val request = networkClient.newClientRequest(prevController.idString, controlledShutdownRequest,
                 time.milliseconds(), true)
               val clientResponse = NetworkClientUtils.sendAndReceive(networkClient, request, time)
@@ -948,7 +957,7 @@ class KafkaServer(
                 ioException = true
                 warn("Error during controlled shutdown, possibly because leader movement took longer than the " +
                   s"configured controller.socket.timeout.ms and/or request.timeout.ms: ${ioe.getMessage}")
-                // ignore and try again
+              // ignore and try again
             }
           }
           if (!shutdownSucceeded && remainingRetries > 0) {
@@ -1171,10 +1180,10 @@ class KafkaServer(
   }
 
   /**
-    * Return a sequence id generated by updating the broker sequence id path in ZK.
-    * Users can provide brokerId in the config. To avoid conflicts between ZK generated
-    * sequence id and configured brokerId, we increment the generated sequence id by KafkaConfig.MaxReservedBrokerId.
-    */
+   * Return a sequence id generated by updating the broker sequence id path in ZK.
+   * Users can provide brokerId in the config. To avoid conflicts between ZK generated
+   * sequence id and configured brokerId, we increment the generated sequence id by KafkaConfig.MaxReservedBrokerId.
+   */
   private def generateBrokerId(): Int = {
     try {
       zkClient.generateBrokerSequenceId() + config.maxReservedBrokerId

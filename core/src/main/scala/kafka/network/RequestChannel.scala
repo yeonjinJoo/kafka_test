@@ -371,7 +371,9 @@ class RequestChannel(val queueSize: Int,
 
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
-  // requestQueue for basic request ( priority 0 ) - 곧 삭제
+  // requestQueue for WakeupRequest & ShutdownRequest
+  // handler가 requestQueue에서 poll하며 block 되게한다.
+  // priorityQueues 중 하나에 요청이 들어오거나, callbackQueue 요청이 들어오면 requestQueue에 WakeupRequest가 추가되며 handler가 깨어난다.
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
   private val processors = new ConcurrentHashMap[Int, Processor]()
   private val requestQueueSizeMetricName = metricNamePrefix.concat(RequestQueueSizeMetric)
@@ -414,6 +416,7 @@ class RequestChannel(val queueSize: Int,
   /** Send a request to be handled, potentially blocking until there is room in the queue for the request */
   def sendRequest(request: RequestChannel.Request): Unit = {
     requestQueueP2.put(request)
+    requestQueue.offer(WakeupRequest)
   } // 기존의 다양한 요청 ( topic creation, deletion 등 )은 이 함수를 통해 requestQueueP2에 넣도록.
 
   // Produce 요청은 이 함수에서 제어. client 측에서 priority를 생성해서 보내므로 1 ~ 3 인 request만 존재
@@ -427,6 +430,9 @@ class RequestChannel(val queueSize: Int,
     else if (priority == 1) {
       requestQueueP1.put(request)
     }
+    // 요청이 PriorityQueue 중 하나에 추가되었으면 requestQueue에서 poll 하며 블락된 handler를 깨우기 위해 requestQueue에 WakeupRequest (알람역할) 추가
+    // 깨운 뒤 priority scheduling 진행
+    requestQueue.offer(WakeupRequest)
   }
 
   def closeConnection(
@@ -512,7 +518,10 @@ class RequestChannel(val queueSize: Int,
    * Check the callback queue and execute first if present since these
    * requests have already waited in line. */
 
-  // 이 부분에 priority 스케쥴링 알고리즘 추가 필요.
+  // priority 스케쥴링 알고리즘 추가 적용
+  // KafkaRequestHandler 측에서 null이 반환된 경우 아무것도 하지 않고 continue 하기 때문에 null 반환해도 괜찮다
+  // requestQueue에 들어가는 요청은 WakeupRequest, ShutdownRequest 뿐이다
+  // request 처리 KafkaRequestHandler.scala line 123 ~ 확인
   def receiveRequest(timeout: Long): RequestChannel.BaseRequest = {
     val callbackRequest = callbackQueue.poll()
     if (callbackRequest != null)
@@ -520,9 +529,37 @@ class RequestChannel(val queueSize: Int,
     else {
       val request = requestQueue.poll(timeout, TimeUnit.MILLISECONDS)
       request match {
-        case WakeupRequest => callbackQueue.poll()
+        case WakeupRequest =>
+          val temp = callbackQueue.poll() // 먼저 callbackQueue 요청 확인
+          if (temp != null) temp
+          else pickFromPriorityQueues() // callbackQueue가 null이라면 priorityScheduling으로 요청 처리
         case _ => request
       }
+    }
+  }
+
+  /**
+   * 우선순위 큐(P1~P3)에서 다음 처리할 요청을 선택해 반환한다.
+   * - timeThreshold 도달 시 pass normalization
+   * - starvation 발생 했을 시 starvationBoosting
+   * - 선택되지 않은 큐들의 starvation count 증가
+   *
+   * @return 선택된 큐에서 꺼낸 요청, 모든 큐가 비어 있으면 null
+   */
+  private def pickFromPriorityQueues(): RequestChannel.BaseRequest = {
+    timeCheck.checkTimeMetThreshold(starvationCheck)
+    starvationCheck.starvationBoosting()
+
+    val queueNum = starvationCheck.getMinPassQueueNum(this)
+    if (queueNum != 0) {
+      starvationCheck.increaseStarvationCount(this, queueNum)
+    }
+
+    queueNum match {
+      case 3 => requestQueueP3.poll()
+      case 2 => requestQueueP2.poll()
+      case 1 => requestQueueP1.poll()
+      case _ => null
     }
   }
 

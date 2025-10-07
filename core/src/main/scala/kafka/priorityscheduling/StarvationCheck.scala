@@ -63,17 +63,17 @@ class StarvationCheck {
       var minPassValue = Long.MaxValue
       var queueNum = 0 // 모든 Queue에 요청이 없는 경우, 0 반환 - 값 받아서 시스템에서 처리 필요
 
-      if (rc.getRequestQueueP1Size() != 0 && pass(0) < minPassValue) {
-        minPassValue = pass(0);
-        queueNum = 1
+      if (rc.getRequestQueueP3Size() != 0 && pass(2) < minPassValue) {
+        minPassValue = pass(2);
+        queueNum = 3
       }
       if (rc.getRequestQueueP2Size() != 0 && pass(1) < minPassValue) {
         minPassValue = pass(1);
         queueNum = 2
       }
-      if (rc.getRequestQueueP3Size() != 0 && pass(2) < minPassValue) {
-        minPassValue = pass(2);
-        queueNum = 3
+      if (rc.getRequestQueueP1Size() != 0 && pass(0) < minPassValue) {
+        minPassValue = pass(0);
+        queueNum = 1
       }
 
       // 요청이 하나도 없는 경우가 아닐 때

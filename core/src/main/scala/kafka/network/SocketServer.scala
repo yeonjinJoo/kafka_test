@@ -27,7 +27,7 @@ import java.util.concurrent._
 import java.util.concurrent.atomic._
 import kafka.cluster.{BrokerEndPoint, EndPoint}
 import kafka.interceptor.BrokerInterceptors
-import kafka.priorityscheduling.{StarvationCheck, TimeCheck}
+import kafka.priorityscheduling.StarvationCheck
 import kafka.network.Processor._
 import kafka.network.RequestChannel.{CloseConnectionResponse, EndThrottlingResponse, NoOpResponse, SendResponse, StartThrottlingResponse}
 import kafka.network.SocketServer._
@@ -86,8 +86,7 @@ class SocketServer(val config: KafkaConfig,
                    val credentialProvider: CredentialProvider,
                    val apiVersionManager: ApiVersionManager,
                    val brokerInterceptors: BrokerInterceptors = new BrokerInterceptors(Vector.empty),
-                   val starvationCheck: StarvationCheck = new StarvationCheck(),
-                   val timeCheck: TimeCheck = new TimeCheck())
+                   val starvationCheck: StarvationCheck = new StarvationCheck())
   extends Logging with BrokerReconfigurable {
 
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
@@ -107,11 +106,11 @@ class SocketServer(val config: KafkaConfig,
   private val memoryPool = if (config.queuedMaxBytes > 0) new SimpleMemoryPool(config.queuedMaxBytes, config.socketRequestMaxBytes, false, memoryPoolSensor) else MemoryPool.NONE
   // data-plane
   private[network] val dataPlaneAcceptors = new ConcurrentHashMap[EndPoint, DataPlaneAcceptor]()
-  val dataPlaneRequestChannel = new RequestChannel(maxQueuedRequests, DataPlaneAcceptor.MetricPrefix, time, apiVersionManager.newRequestMetrics, brokerInterceptors, starvationCheck, timeCheck)
+  val dataPlaneRequestChannel = new RequestChannel(maxQueuedRequests, DataPlaneAcceptor.MetricPrefix, time, apiVersionManager.newRequestMetrics, brokerInterceptors, starvationCheck)
   // control-plane
   private[network] var controlPlaneAcceptorOpt: Option[ControlPlaneAcceptor] = None
   val controlPlaneRequestChannelOpt: Option[RequestChannel] = config.controlPlaneListenerName.map(_ =>
-    new RequestChannel(20, ControlPlaneAcceptor.MetricPrefix, time, apiVersionManager.newRequestMetrics, brokerInterceptors, starvationCheck, timeCheck))
+    new RequestChannel(20, ControlPlaneAcceptor.MetricPrefix, time, apiVersionManager.newRequestMetrics, brokerInterceptors, starvationCheck))
 
   private[this] val nextProcessorId: AtomicInteger = new AtomicInteger(0)
   val connectionQuotas = new ConnectionQuotas(config, time, metrics)
@@ -1146,6 +1145,21 @@ private[kafka] class Processor(
     }
   }
 
+  // 네트워크 연결 & 메타데이터, 보안 등과 같은 요청의 경우 바로 requestQueue로 보낸다
+  private def isControlRequest(header: RequestHeader): Boolean = {
+    header.apiKey match {
+      case ApiKeys.API_VERSIONS
+           | ApiKeys.METADATA
+           | ApiKeys.SASL_HANDSHAKE
+           | ApiKeys.SASL_AUTHENTICATE
+           | ApiKeys.INIT_PRODUCER_ID
+           | ApiKeys.UPDATE_METADATA
+           | ApiKeys.LEADER_AND_ISR
+           | ApiKeys.PRODUCER_IDS => true
+      case _ => false
+    }
+  }
+
   private def extractPriorityFromFirstRecord(req: RequestChannel.Request, header: RequestHeader): Int = {
     if (header.apiKey != ApiKeys.PRODUCE) return 2 // Produce 요청이 아닌 경우 중간 Queue로
 
@@ -1213,7 +1227,8 @@ private[kafka] class Processor(
                 // PRODUCE인 경우 record의 priority 확인 후, priority 담아 sendRequest
                 // 아닌 경우 중간 priority Queue로 삽입
                 val priority = extractPriorityFromFirstRecord(req, header)
-                requestChannel.sendRequest(req, priority)
+                val isControlReq = isControlRequest(header)
+                requestChannel.sendRequest(req, priority, isControlReq)
                 //                requestChannel.sendRequest(req)
 
                 selector.mute(connectionId)

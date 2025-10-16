@@ -23,7 +23,7 @@ import kafka.controller.KafkaController
 import kafka.coordinator.group.GroupCoordinatorAdapter
 import kafka.coordinator.transaction.{ProducerIdManager, TransactionCoordinator}
 import kafka.interceptor.{BrokerInterceptors, MetadataRequestMonitorBrokerInterceptor, MonitorLoggingBrokerInterceptor, ProduceRequestMonitorBrokerInterceptor, TopicCreateRequestMonitorBrokerInterceptor}
-import kafka.priorityscheduling.{StarvationCheck, TimeCheck}
+import kafka.priorityscheduling.StarvationCheck
 import kafka.log.LogManager
 import kafka.log.remote.RemoteLogManager
 import kafka.metrics.KafkaMetricsReporter
@@ -137,9 +137,8 @@ class KafkaServer(
   var unusedBrokerInterceptors: BrokerInterceptors = _
   var brokerInterceptors: BrokerInterceptors = _
 
-  // starvationCheck & timeCheck 객체 생성 ( broker에 1개 존재하는 객체 )
+  // starvationCheck 객체 생성 ( broker에 1개 존재하는 객체 )
   var starvationCheck: StarvationCheck = _
-  var timeCheck: TimeCheck = _
 
   var authorizer: Option[Authorizer] = None
   @volatile var socketServer: SocketServer = _
@@ -401,9 +400,8 @@ class KafkaServer(
         //              brokerInterceptors = new BrokerInterceptors(Vector.empty)
         brokerInterceptors.init()
 
-        // Initialize StarvationCheck class & TimeCheck class
+        // Initialize StarvationCheck class
         starvationCheck = new StarvationCheck()
-        timeCheck = new TimeCheck()
 
         // Create and start the socket server acceptor threads so that the bound port is known.
         // Delay starting processors until the end of the initialization sequence to ensure
@@ -411,7 +409,7 @@ class KafkaServer(
         //
         // Note that we allow the use of KRaft mode controller APIs when forwarding is enabled
         // so that the Envelope request is exposed. This is only used in testing currently.
-        socketServer = new SocketServer(config, metrics, time, credentialProvider, apiVersionManager, brokerInterceptors, starvationCheck, timeCheck)
+        socketServer = new SocketServer(config, metrics, time, credentialProvider, apiVersionManager, brokerInterceptors, starvationCheck)
 
         // Start alter partition manager based on the IBP version
         alterPartitionManager = if (config.interBrokerProtocolVersion.isAlterPartitionSupported) {

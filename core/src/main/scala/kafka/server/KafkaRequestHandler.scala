@@ -177,6 +177,10 @@ class KafkaRequestHandler(
           // We should handle this in receiveRequest by polling callbackQueue.
           warn("Received a wakeup request outside of typical usage.")
 
+        case RequestChannel.RequestInserted =>
+          // We should handle this in receiveRequest by picking one request from three priority queues.
+          warn("Received a requestInserted request outside of typical usage.")
+
         case null => // continue
       }
     }

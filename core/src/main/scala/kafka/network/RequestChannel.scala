@@ -23,7 +23,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.typesafe.scalalogging.Logger
 import com.yammer.metrics.core.{Histogram, Meter}
 import kafka.interceptor.BrokerInterceptors
-import kafka.priorityscheduling.{StarvationCheck, TimeCheck}
+import kafka.priorityscheduling.StarvationCheck
 import kafka.network
 import kafka.server.{KafkaConfig, RequestLocal}
 import kafka.utils.{Logging, Pool}
@@ -63,6 +63,8 @@ object RequestChannel extends Logging {
   case object ShutdownRequest extends BaseRequest
 
   case object WakeupRequest extends BaseRequest
+
+  case object RequestInserted extends BaseRequest
 
   class Metrics(enabledApis: Iterable[ApiKeys]) {
     def this(scope: ListenerType) = {
@@ -364,8 +366,8 @@ class RequestChannel(val queueSize: Int,
                      time: Time,
                      val metrics: RequestChannel.Metrics,
                      val brokerInterceptors: BrokerInterceptors = new BrokerInterceptors(Vector.empty),
-                     val starvationCheck: StarvationCheck = new StarvationCheck(),
-                     val timeCheck: TimeCheck = new TimeCheck()) {
+                     val starvationCheck: StarvationCheck = new StarvationCheck()
+                    ) {
 
   import RequestChannel._
 
@@ -416,23 +418,25 @@ class RequestChannel(val queueSize: Int,
   /** Send a request to be handled, potentially blocking until there is room in the queue for the request */
   def sendRequest(request: RequestChannel.Request): Unit = {
     requestQueueP2.put(request)
-    requestQueue.offer(WakeupRequest)
+    requestQueue.put(RequestInserted)
   } // 기존의 다양한 요청 ( topic creation, deletion 등 )은 이 함수를 통해 requestQueueP2에 넣도록.
 
   // Produce 요청은 이 함수에서 제어. client 측에서 priority를 생성해서 보내므로 1 ~ 3 인 request만 존재
-  def sendRequest(request: RequestChannel.Request, priority: Int): Unit = {
-    if (priority == 3) {
-      requestQueueP3.put(request)
+  def sendRequest(request: RequestChannel.Request, priority: Int, isControlReq: Boolean): Unit = {
+    // 연결, 메타데이터, 보안 등과 같은 control 요청의 경우 바로 처리될 수 있게 requestQueue로
+    if (isControlReq) {
+      requestQueue.put(request)
     }
-    else if (priority == 2) {
-      requestQueueP2.put(request)
+    else {
+      priority match {
+        case 3 => requestQueueP3.put(request)
+        case 2 => requestQueueP2.put(request)
+        case 1 => requestQueueP1.put(request)
+      }
+      // 요청이 PriorityQueue 중 하나에 추가되었으면 requestQueue에서 poll 하며 블락된 handler를 깨우기 위해 requestQueue에 WakeupRequest (알람역할) 추가
+      // 깨운 뒤 priority scheduling 진행
+      requestQueue.put(RequestInserted)
     }
-    else if (priority == 1) {
-      requestQueueP1.put(request)
-    }
-    // 요청이 PriorityQueue 중 하나에 추가되었으면 requestQueue에서 poll 하며 블락된 handler를 깨우기 위해 requestQueue에 WakeupRequest (알람역할) 추가
-    // 깨운 뒤 priority scheduling 진행
-    requestQueue.offer(WakeupRequest)
   }
 
   def closeConnection(
@@ -529,10 +533,8 @@ class RequestChannel(val queueSize: Int,
     else {
       val request = requestQueue.poll(timeout, TimeUnit.MILLISECONDS)
       request match {
-        case WakeupRequest =>
-          val temp = callbackQueue.poll() // 먼저 callbackQueue 요청 확인
-          if (temp != null) temp
-          else pickFromPriorityQueues() // callbackQueue가 null이라면 priorityScheduling으로 요청 처리
+        case WakeupRequest => callbackQueue.poll()
+        case RequestInserted => pickFromPriorityQueues()
         case _ => request
       }
     }
@@ -547,13 +549,20 @@ class RequestChannel(val queueSize: Int,
    * @return 선택된 큐에서 꺼낸 요청, 모든 큐가 비어 있으면 null
    */
   private def pickFromPriorityQueues(): RequestChannel.BaseRequest = {
-    timeCheck.checkTimeMetThreshold(starvationCheck)
-    starvationCheck.starvationBoosting()
-
-    val queueNum = starvationCheck.getMinPassQueueNum(this)
-    if (queueNum != 0) {
-      starvationCheck.increaseStarvationCount(this, queueNum)
-    }
+    // for test - 이건 잘 동작된다
+    //    if (requestQueueP3.size() != 0) {
+    //      requestQueueP3.poll()
+    //    }
+    //    else if (requestQueueP2.size() != 0) {
+    //      requestQueueP2.poll()
+    //    }
+    //    else if (requestQueueP1.size() != 0) {
+    //      requestQueueP1.poll()
+    //    }
+    //    else {
+    //      null
+    //    }
+    val queueNum = starvationCheck.scheduleAndPick(this)
 
     queueNum match {
       case 3 => requestQueueP3.poll()
@@ -575,6 +584,9 @@ class RequestChannel(val queueSize: Int,
 
   def clear(): Unit = {
     requestQueue.clear()
+    requestQueueP1.clear()
+    requestQueueP2.clear()
+    requestQueueP3.clear()
     callbackQueue.clear()
   }
 

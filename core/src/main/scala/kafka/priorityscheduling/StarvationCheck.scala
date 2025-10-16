@@ -2,29 +2,32 @@ package kafka.priorityscheduling
 
 import kafka.network.RequestChannel
 import java.util.concurrent.locks.ReentrantLock
+import org.slf4j.LoggerFactory
+//import kafka.priorityscheduling.TimeCheck
 
 class StarvationCheck {
-  private val pass = new Array[Long](3) // queue 별로 pass 값 0으로 정의 - lock 필요
-  private val stride = new Array[Long](3) // 비율에 맞게 변경 필요. queue 별로 각자 다른 stride 값 정의. lock 필요 x. 읽어오기만 o.
-  private val starvationCount = new Array[Long](3) //  queue 별로 starvation count 값 정의
-  private val starvationThreshold: Long = 0 // 설정 필요 - 그냥 값임. 읽어오기만 o.
+  private val pass: Array[Long] = Array(0L, 0L, 0L) // queue 별로 pass 값 0으로 정의 - lock 필요
+  private val stride: Array[Long] = Array(5L, 3L, 2L) // 비율에 맞게 변경 필요. queue 별로 각자 다른 stride 값 정의. lock 필요 x. 읽어오기만 o.
+  //  private val stride: Array[Long] = Array(1L, 1L, 1L)
+  private val starvationCount: Array[Long] = Array(0L, 0L, 0L) //  queue 별로 starvation count 값 정의
+  private val starvationThreshold: Array[Long] = Array(10L, 10L, 10L) // 설정 필요 - 그냥 값임. 읽어오기만 o.
+  //  private val starvationThreshold: Array[Long] = Array(10L, 10L, 10L)
   private val lock = new ReentrantLock()
+  //  private val timeCheck = new TimeCheck(800L)
+  private val reqLog = LoggerFactory.getLogger("kafka.request.logger")
+
 
   /**
    * 각 큐가 비어 있지 않고 이번에 선택되지 않은 경우, 해당 큐의 starvation 카운트를 1씩 증가시킨다.
    *
-   * @param rc RequestChannel – 각 큐의 요청 개수를 조회
+   * @param selected - 선택된 Queue number
+   * @param sizes    - 각 큐의 size
    * @return 없음
    */
-  def increaseStarvationCount(rc: RequestChannel, selected: Int): Unit = {
-    lock.lock()
-    try {
-      if (selected != 1 && rc.getRequestQueueP1Size() != 0) starvationCount(0) += 1
-      if (selected != 2 && rc.getRequestQueueP2Size() != 0) starvationCount(1) += 1
-      if (selected != 3 && rc.getRequestQueueP3Size() != 0) starvationCount(2) += 1
-    } finally {
-      lock.unlock()
-    }
+  def increaseStarvationCount(selected: Int, sizes: Array[Int]): Unit = {
+    if (selected != 1 && sizes(0) != 0) starvationCount(0) += 1
+    if (selected != 2 && sizes(1) != 0) starvationCount(1) += 1
+    if (selected != 3 && sizes(2) != 0) starvationCount(2) += 1
   }
 
   /**
@@ -34,16 +37,15 @@ class StarvationCheck {
    * @param 없음
    * @return 없음
    */
-  def starvationBoosting(): Unit = {
-    lock.lock()
-    try {
-      val minPassValue = getMinPassValue()
-      for (i <- 0 until 3) {
-        if (starvationCount(i) >= starvationThreshold)
+  def starvationBoosting(sizes: Array[Int]): Unit = {
+    val minPassValue = getMinPassValue()
+    for (i <- 0 until 3) {
+      if (sizes(i) > 0 && starvationCount(i) >= starvationThreshold(i)) {
+        if (pass(i) > minPassValue) {
           pass(i) = minPassValue
+        }
+        starvationCount(i) = 0 // 부스팅 후 starvationCount 초기화
       }
-    } finally {
-      lock.unlock()
     }
   }
 
@@ -57,36 +59,41 @@ class StarvationCheck {
    * @return 1~3 : 선택된 큐 번호, 0 : 모든 큐가 비어 있는 경우
    */
   // 그 어떤 Queue에도 요청이 없는 경우 처리 필요. Kafka는 해당 Queue에서 계속 대기..?하는데... 이 경우는 Queue가 3개라
-  def getMinPassQueueNum(rc: RequestChannel): Int = {
-    lock.lock()
-    try {
-      var minPassValue = Long.MaxValue
-      var queueNum = 0 // 모든 Queue에 요청이 없는 경우, 0 반환 - 값 받아서 시스템에서 처리 필요
+  def getMinPassQueueNum(sizes: Array[Int]): Int = {
+    var minPassValue = Long.MaxValue
+    var queueNum = 0 // 모든 Queue에 요청이 없는 경우, 0 반환 - 값 받아서 시스템에서 처리 필요
 
-      if (rc.getRequestQueueP3Size() != 0 && pass(2) < minPassValue) {
-        minPassValue = pass(2);
-        queueNum = 3
-      }
-      if (rc.getRequestQueueP2Size() != 0 && pass(1) < minPassValue) {
-        minPassValue = pass(1);
-        queueNum = 2
-      }
-      if (rc.getRequestQueueP1Size() != 0 && pass(0) < minPassValue) {
-        minPassValue = pass(0);
-        queueNum = 1
-      }
-
-      // 요청이 하나도 없는 경우가 아닐 때
-      if (queueNum != 0) {
-        starvationCount(queueNum - 1) = 0
-        pass(queueNum - 1) += stride(queueNum - 1)
-      }
-
-      queueNum
-
-    } finally {
-      lock.unlock()
+    if (sizes(2) != 0 && pass(2) < minPassValue) {
+      minPassValue = pass(2);
+      queueNum = 3
     }
+    if (sizes(1) != 0 && pass(1) < minPassValue) {
+      minPassValue = pass(1);
+      queueNum = 2
+    }
+    if (sizes(0) != 0 && pass(0) < minPassValue) {
+      minPassValue = pass(0);
+      queueNum = 1
+    }
+    //    ${size(queueNum - 1)} - queue size,
+
+    if (reqLog.isTraceEnabled) {
+      if (queueNum == 0)
+        reqLog.trace(s"[PICK] none; sizes=[P1=${sizes(0)}, P2=${sizes(1)}, P3=${sizes(2)}], minPass=$minPassValue")
+      else {
+        val idx = queueNum - 1
+        reqLog.trace(s"[PICK] P$queueNum; size=${sizes(idx)}, minPass=$minPassValue")
+      }
+      //      trace(s"${queueNum} - queue selected, ${minPassValue} - minPassValue")
+    }
+
+    // 요청이 하나도 없는 경우가 아닐 때
+    if (queueNum != 0) {
+      starvationCount(queueNum - 1) = 0
+      pass(queueNum - 1) += stride(queueNum - 1)
+    }
+
+    queueNum
   }
 
   /**
@@ -116,14 +123,40 @@ class StarvationCheck {
    * @return 없음
    */
   def passNormalization(): Unit = {
+    val minPassValue = getMinPassValue()
+    for (i <- 0 until 3) {
+      pass(i) -= minPassValue
+    }
+  }
+
+  def scheduleAndPick(rc: RequestChannel): Int = {
+    var chosen = 0
     lock.lock()
     try {
-      val minPassValue = getMinPassValue()
-      for (i <- 0 until 3) {
-        pass(i) -= minPassValue
-      }
+      val s1 = rc.getRequestQueueP1Size()
+      val s2 = rc.getRequestQueueP2Size()
+      val s3 = rc.getRequestQueueP3Size()
+      if (s1 == 0 && s2 == 0 && s3 == 0) return 0
+
+      val sizes: Array[Int] = Array(s1, s2, s3)
+      // 1. 필요 시 pass normalization
+      //      if (timeCheck.checkTimeMetThreshold()) {
+      //        passNormalization()
+      //      }
+      //      // 2. 필요 시 starvation boosting
+      //      starvationBoosting(sizes)
+
+      chosen = getMinPassQueueNum(sizes)
+
+      //      if (chosen != 0) {
+      //        increaseStarvationCount(chosen, sizes)
+      //      }
     } finally {
       lock.unlock()
     }
+
+    // 선택된 queueNum 반환
+    chosen
+
   }
 }

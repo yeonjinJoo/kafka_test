@@ -3,7 +3,6 @@ package kafka.priorityscheduling
 // time threshold 값을 class 생성할 때 받기
 class TimeCheck(timeThreshold: Long = 800L) {
   private var lastNormalizationTime: Long = 0L // last pass normalization 된 시간
-  //  private val timeThreshold: Long = 800L // time threshold 값 정의 - 그냥 값임. 읽어오기만 o.
   // 800ms에 한번씩 reset
 
   /**
@@ -14,8 +13,8 @@ class TimeCheck(timeThreshold: Long = 800L) {
    */
   def checkTimeMetThreshold(): Boolean = {
     var isTimeMetThreshold = false
-    val currentTime = System.currentTimeMillis()
-    if (currentTime - lastNormalizationTime >= timeThreshold) {
+    val currentTime = System.nanoTime()
+    if (((currentTime - lastNormalizationTime) / 1_000_000) >= timeThreshold) {
       lastNormalizationTime = currentTime
       isTimeMetThreshold = true
     }

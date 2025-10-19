@@ -40,6 +40,7 @@ import org.apache.kafka.network.Session
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 
 import java.util
+import java.util.concurrent.locks.ReentrantLock
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.reflect.ClassTag
@@ -87,6 +88,11 @@ object RequestChannel extends Logging {
 
   case class CallbackRequest(fun: RequestLocal => Unit,
                              originalRequest: Request) extends BaseRequest
+
+  // wrapper class for priority request - add enqueue time
+  case class PriRequest(request: RequestChannel.Request,
+                        timeoutMs: Long,
+                        enqueueNs: Long = System.nanoTime())
 
   class Request(val processor: Int,
                 val context: RequestContext,
@@ -383,9 +389,12 @@ class RequestChannel(val queueSize: Int,
   private val callbackQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
 
   // requestQueue for priority 1 ~ 3
-  private val requestQueueP1 = new ArrayBlockingQueue[BaseRequest](queueSize)
-  private val requestQueueP2 = new ArrayBlockingQueue[BaseRequest](queueSize)
-  private val requestQueueP3 = new ArrayBlockingQueue[BaseRequest](queueSize)
+  private val requestQueueP1 = new ArrayBlockingQueue[PriRequest](queueSize)
+  private val requestQueueP2 = new ArrayBlockingQueue[PriRequest](queueSize)
+  private val requestQueueP3 = new ArrayBlockingQueue[PriRequest](queueSize)
+
+  // lock for decide which queue to process
+  private val lock = new ReentrantLock()
 
   metricsGroup.newGauge(requestQueueSizeMetricName, () => requestQueue.size)
 
@@ -416,22 +425,24 @@ class RequestChannel(val queueSize: Int,
   }
 
   /** Send a request to be handled, potentially blocking until there is room in the queue for the request */
-  def sendRequest(request: RequestChannel.Request): Unit = {
-    requestQueueP2.put(request)
-    requestQueue.put(RequestInserted)
-  } // 기존의 다양한 요청 ( topic creation, deletion 등 )은 이 함수를 통해 requestQueueP2에 넣도록.
+  //  def sendRequest(request: RequestChannel.Request): Unit = {
+  //    val wrapped = new PriRequest(request)
+  //    requestQueueP2.put(wrapped)
+  //    requestQueue.put(RequestInserted)
+  //  } // 기존의 다양한 요청 ( topic creation, deletion 등 )은 이 함수를 통해 requestQueueP2에 넣도록.
 
   // Produce 요청은 이 함수에서 제어. client 측에서 priority를 생성해서 보내므로 1 ~ 3 인 request만 존재
-  def sendRequest(request: RequestChannel.Request, priority: Int, isControlReq: Boolean): Unit = {
+  def sendRequest(request: RequestChannel.Request, priority: Int, isControlReq: Boolean, timeoutMs: Long): Unit = {
     // 연결, 메타데이터, 보안 등과 같은 control 요청의 경우 바로 처리될 수 있게 requestQueue로
     if (isControlReq) {
       requestQueue.put(request)
     }
     else {
+      val wrapped = new PriRequest(request, timeoutMs)
       priority match {
-        case 3 => requestQueueP3.put(request)
-        case 2 => requestQueueP2.put(request)
-        case 1 => requestQueueP1.put(request)
+        case 3 => requestQueueP3.put(wrapped)
+        case 2 => requestQueueP2.put(wrapped)
+        case 1 => requestQueueP1.put(wrapped)
       }
       // 요청이 PriorityQueue 중 하나에 추가되었으면 requestQueue에서 poll 하며 블락된 handler를 깨우기 위해 requestQueue에 WakeupRequest (알람역할) 추가
       // 깨운 뒤 priority scheduling 진행
@@ -540,6 +551,26 @@ class RequestChannel(val queueSize: Int,
     }
   }
 
+  // queue의 peek request가 들어온지 얼마나 지났는지 nano seconds로 반환
+  private def headAgeMs(request: PriRequest, nowNs: Long): Long = {
+    if (request != null) {
+      (nowNs - request.enqueueNs) / 1_000_000
+    }
+    else {
+      -1L
+    }
+  }
+
+  // queue의 peek request의 timeoutMs 제한이 얼마인지 확인해서 milli seconds 반환
+  private def timeoutMs(request: PriRequest): Long = {
+    if (request != null) {
+      request.timeoutMs
+    }
+    else {
+      -1L
+    }
+  }
+
   /**
    * 우선순위 큐(P1~P3)에서 다음 처리할 요청을 선택해 반환한다.
    * - timeThreshold 도달 시 pass normalization
@@ -549,27 +580,38 @@ class RequestChannel(val queueSize: Int,
    * @return 선택된 큐에서 꺼낸 요청, 모든 큐가 비어 있으면 null
    */
   private def pickFromPriorityQueues(): RequestChannel.BaseRequest = {
-    // for test - 이건 잘 동작된다
-    //    if (requestQueueP3.size() != 0) {
-    //      requestQueueP3.poll()
-    //    }
-    //    else if (requestQueueP2.size() != 0) {
-    //      requestQueueP2.poll()
-    //    }
-    //    else if (requestQueueP1.size() != 0) {
-    //      requestQueueP1.poll()
-    //    }
-    //    else {
-    //      null
-    //    }
-    val queueNum = starvationCheck.scheduleAndPick(this)
+    val nowNs = System.nanoTime()
+    var result: RequestChannel.BaseRequest = null
+    var queueNum = 0
 
-    queueNum match {
-      case 3 => requestQueueP3.poll()
-      case 2 => requestQueueP2.poll()
-      case 1 => requestQueueP1.poll()
-      case _ => null
+    lock.lock()
+    try {
+      val head1 = requestQueueP1.peek()
+      val head2 = requestQueueP2.peek()
+      val head3 = requestQueueP3.peek()
+
+      val headAgeMsForPriorityQueues = Array(headAgeMs(head1, nowNs), headAgeMs(head2, nowNs), headAgeMs(head3, nowNs))
+
+      val timeoutMsForPriorityQueues = Array(timeoutMs(head1), timeoutMs(head2), timeoutMs(head3))
+
+      queueNum = starvationCheck.scheduleAndPick(this, headAgeMsForPriorityQueues, timeoutMsForPriorityQueues)
+
+      val picked: PriRequest = queueNum match {
+        case 3 => requestQueueP3.poll()
+        case 2 => requestQueueP2.poll()
+        case 1 => requestQueueP1.poll()
+        case _ => null
+      }
+
+      if (picked != null) {
+        result = picked.request
+      }
+
+    } finally {
+      lock.unlock()
     }
+
+    result
   }
 
   /** Get the next request or block until there is one */

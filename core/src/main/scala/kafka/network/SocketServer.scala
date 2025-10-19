@@ -1155,10 +1155,25 @@ private[kafka] class Processor(
            | ApiKeys.INIT_PRODUCER_ID
            | ApiKeys.UPDATE_METADATA
            | ApiKeys.LEADER_AND_ISR
-           | ApiKeys.PRODUCER_IDS => true
+           | ApiKeys.CONTROLLED_SHUTDOWN => true
       case _ => false
     }
   }
+
+  // | ApiKeys.ALLOCATE_PRODUCER_IDS
+
+  // produce 요청인 경우, 요청에서 timeout 제한 시간 꺼내서 반환
+  // produce 요청이 아닌 경우 0 반환
+  private def extractTimeoutMs(req: RequestChannel.Request, header: RequestHeader): Long = {
+    header.apiKey match {
+      case ApiKeys.PRODUCE =>
+        val body = req.body[ProduceRequest]
+        body.timeout().toLong
+
+      case _ => -1L
+    }
+  }
+
 
   private def extractPriorityFromFirstRecord(req: RequestChannel.Request, header: RequestHeader): Int = {
     if (header.apiKey != ApiKeys.PRODUCE) return 2 // Produce 요청이 아닌 경우 중간 Queue로
@@ -1227,8 +1242,9 @@ private[kafka] class Processor(
                 // PRODUCE인 경우 record의 priority 확인 후, priority 담아 sendRequest
                 // 아닌 경우 중간 priority Queue로 삽입
                 val priority = extractPriorityFromFirstRecord(req, header)
+                val timeoutMs = extractTimeoutMs(req, header)
                 val isControlReq = isControlRequest(header)
-                requestChannel.sendRequest(req, priority, isControlReq)
+                requestChannel.sendRequest(req, priority, isControlReq, timeoutMs)
                 //                requestChannel.sendRequest(req)
 
                 selector.mute(connectionId)

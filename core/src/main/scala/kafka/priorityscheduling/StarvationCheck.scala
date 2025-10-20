@@ -5,21 +5,23 @@ import org.slf4j.LoggerFactory
 import kafka.priorityscheduling.TimeCheck
 
 class StarvationCheck {
-  private val pass: Array[Long] = Array(0L, 0L, 0L) // queue 별로 pass 값 0으로 정의 - lock 필요
-  private val stride: Array[Long] = Array(5L, 3L, 2L) // 비율에 맞게 변경 필요. queue 별로 각자 다른 stride 값 정의. lock 필요 x. 읽어오기만 o.
+  private val pass: Array[Long] = Array(0L, 0L, 0L)
+  private val stride: Array[Long] = Array(5L, 3L, 2L)
 
   // 각 큐는 연속적으로 요청 최대 ~개까지만 처리 할 수 있다. 큐 별로 정해진 값
-  private val occupyThreshold: Array[Long] = Array(5L, 5L, 5L) // 설정 필요 - 그냥 값임. 읽어오기만 o.
+  private val occupyThreshold: Array[Long] = Array(5L, 5L, 5L)
   private val timeCheck = new TimeCheck(800L)
   private val reqLog = LoggerFactory.getLogger("kafka.request.logger")
 
   /**
    * 현재 3개의 큐 중 pass 값이 가장 작은 큐를 선택한다.
-   * - 비어있는 큐는 제외
-   * - 선택된 큐의 starvationCount를 0으로 초기화하고
-   * stride 값만큼 pass를 증가시킨다.
    *
-   * @param rc RequestChannel – 각 큐의 요청 개수를 조회
+   * 1) 비어있는 큐는 제외
+   * 2) 선택된 큐가 있고, 해당 큐의 pass가 동료 큐 pass 대비 threshold 이상 뒤쳐지지 않으며
+   * 비어있지 않은 큐가 2개 이상일 때만 선택된 큐의 pass에 stride를 더한다
+   * // 비어있지 않은 큐가 선택된 큐 하나뿐이라면 pass 증가시키지 않음으로써 pass 독주로 인한 starvation을 방지한다
+   *
+   * @param sizes Array[Int] – 각 큐의 현재 대기 요청 개수를 담은 int array
    * @return 1~3 : 선택된 큐 번호, 0 : 모든 큐가 비어 있는 경우
    */
   def getMinPassQueueNum(sizes: Array[Int]): Int = {
@@ -69,8 +71,21 @@ class StarvationCheck {
     queueNum
   }
 
-  // futureRequestNumDiff가 threshold를 넘어선 경우, 다른 두 Queue의 pass가 너무 앞서나가서 계속 이 selected queue만 처리될 위기에 놓인 것.
-  // selected의 pass를 다른 두 Queue만큼으로 끌어올린후 true 반환 or pass 변경하지 않고 false 반환
+
+  /**
+   * 선택된 큐의 pass가 다른 큐들보다 과하게 뒤쳐졌다면 해당 큐의 pass를
+   * 동료 큐들의 최소 pass 값으로 끌어올림으로써 (pass catch-up),
+   * 한동안 하나의 큐만 계속해서 처리되는 경우를 방지한다.
+   *
+   * 1) 선택된 큐를 제외한 두 큐의 pass 중 최소값을 구한다
+   * 2) 현재 선택된 큐가 그 최소값까지 따라가기 위해 필요한 향후 처리 건수를 계산한다
+   * // 향후 처리 건수 = ( 두 큐의 pass 중 최소값 - 선택된 큐의 pass ) / 선택된 큐의 stride
+   * 3) 향후 처리 건수가 occupyThreshold 이상이면 선택된 큐의 pass를 다른 두 큐의 pass 최소값으로 갱신하고 true 반환,
+   * 그렇지 않으면 pass는 변경하지 않고 false 반환
+   *
+   * @param selected Int – 선택된 큐의 번호
+   * @return 선택된 큐의 pass가 threshold 이상 뒤쳐졌다면 pass 갱신 후 true, 아니라면 false
+   */
   private def isPassFalledBehind(selected: Int): Boolean = {
     var minPassValueOfOthers: Long = Long.MaxValue
 
@@ -102,8 +117,20 @@ class StarvationCheck {
     }
   }
 
-  private def getTimeOutRiskyQueueNum(headAgeMsForPriorityQueues: Array[Long], // 비어있으면 -1
-                                      timeoutMsForPriorityQueues: Array[Long]): Int = { // 모르면 -1
+  /**
+   * 각 큐의 헤드 요청의 waiting time과 timeout 정보를 이용해
+   * 요청의 타임아웃 위험이 가장 큰 큐 번호를 선택한다
+   *
+   * 1) 큐가 비어있지 않고, 해당 큐 헤드 요청의 timeout 조건 값을 알고 있는 경우만 후보로 고려한다
+   * 2) 위험 판정 기준 : 헤드 요청의 waiting time >= timeout * 0.6 (timeout 조건 값의 60% 이상 대기한 경우)
+   * 3) 여러 후보가 있다면 경과 시간이 가장 큰 큐를 선택한다
+   *
+   * @param headAgeMsForPriorityQueues Array[Long] – 각 큐 헤드 요청의 대기 시간(ms), 큐가 비어있다면 -1
+   * @param timeoutMsForPriorityQueues Array[Long] - 각 큐 헤드 요청의 timeout 조건 값(ms), 값을 모르면 -1
+   * @return 1~3 : 위험 요청 가진 큐 번호, 0 : 위험 큐가 없는 경우
+   */
+  private def getTimeOutRiskyQueueNum(headAgeMsForPriorityQueues: Array[Long],
+                                      timeoutMsForPriorityQueues: Array[Long]): Int = {
     var queueNum = 0
     var maxTimeElapsed = Long.MinValue
 
@@ -123,6 +150,18 @@ class StarvationCheck {
     queueNum
   }
 
+  /**
+   * 우선순위 스케쥴링을 수행해 다음에 처리할 큐 번호를 선택한다
+   *
+   * 1) 타임아웃 위험 선처리 : 각 큐 헤드 요청의 대기시간/timeout 정보를 바탕으로, 위험 큐가 있으면 즉시 그 큐를 선택한다
+   * 2) 주기적 pass 리셋 : 일정 시간이 지났다면 각 큐의 pass 값을 초기화한다 (장기 편향/값 과도하게 커지는 현상 방지)
+   * 3) 가장 낮은 pass 가진 큐 선택 : 비어있지 않은 큐들 중 pass가 가장 작은 큐 선택한다
+   *
+   * @param rc                         RequestChannel - 각 큐 사이즈 조회에 사용
+   * @param headAgeMsForPriorityQueues Array[Long] – 각 큐 헤드 요청의 대기 시간(ms), 큐가 비어있다면 -1
+   * @param timeoutMsForPriorityQueues Array[Long] - 각 큐 헤드 요청의 timeout 조건 값(ms), 값을 모르면 -1
+   * @return 1~3 : 선택된 큐 번호, 0 : 모든 큐가 비어있는 경우
+   */
   def scheduleAndPick(rc: RequestChannel,
                       headAgeMsForPriorityQueues: Array[Long],
                       timeoutMsForPriorityQueues: Array[Long]): Int = {
@@ -149,6 +188,5 @@ class StarvationCheck {
 
     // 선택된 queueNum 반환
     chosen
-
   }
 }

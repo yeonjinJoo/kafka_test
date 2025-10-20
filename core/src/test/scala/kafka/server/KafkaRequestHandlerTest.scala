@@ -60,7 +60,7 @@ class KafkaRequestHandlerTest {
       val handler = new KafkaRequestHandler(0, 0, mock(classOf[Meter]), new AtomicInteger(1), requestChannel, apiHandler, time)
 
       val request = makeRequest(time, metrics)
-      requestChannel.sendRequest(request, 2, false, 30000)
+      requestChannel.sendRequest(request, 2, 30000)
 
       when(apiHandler.handle(ArgumentMatchers.eq(request), any())).thenAnswer { _ =>
         time.sleep(2)
@@ -99,7 +99,7 @@ class KafkaRequestHandlerTest {
     var tryCompleteActionCount = 0
 
     val request = makeRequest(time, metrics)
-    requestChannel.sendRequest(request, 2, false, 30000)
+    requestChannel.sendRequest(request, 2, 30000)
 
     when(apiHandler.handle(ArgumentMatchers.eq(request), any())).thenAnswer { _ =>
       handledCount = handledCount + 1
@@ -136,7 +136,7 @@ class KafkaRequestHandlerTest {
     var handledCount = 0
 
     val request = makeRequest(time, metrics)
-    requestChannel.sendRequest(request, 2, false, 30000)
+    requestChannel.sendRequest(request, 2, 30000)
 
     when(apiHandler.handle(ArgumentMatchers.eq(request), any())).thenAnswer { _ =>
       // Prepare the callback.
@@ -171,7 +171,7 @@ class KafkaRequestHandlerTest {
     var handledCount = 0
 
     val request = makeRequest(time, metrics)
-    requestChannel.sendRequest(request, 2, false, 30000)
+    requestChannel.sendRequest(request, 2, 30000)
 
     when(apiHandler.handle(ArgumentMatchers.eq(request), any())).thenAnswer { _ =>
       // Prepare the callback.

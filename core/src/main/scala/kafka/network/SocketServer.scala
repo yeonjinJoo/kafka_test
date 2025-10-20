@@ -1145,23 +1145,6 @@ private[kafka] class Processor(
     }
   }
 
-  // 네트워크 연결 & 메타데이터, 보안 등과 같은 요청의 경우 바로 requestQueue로 보낸다
-  private def isControlRequest(header: RequestHeader): Boolean = {
-    header.apiKey match {
-      case ApiKeys.API_VERSIONS
-           | ApiKeys.METADATA
-           | ApiKeys.SASL_HANDSHAKE
-           | ApiKeys.SASL_AUTHENTICATE
-           | ApiKeys.INIT_PRODUCER_ID
-           | ApiKeys.UPDATE_METADATA
-           | ApiKeys.LEADER_AND_ISR
-           | ApiKeys.CONTROLLED_SHUTDOWN => true
-      case _ => false
-    }
-  }
-
-  // | ApiKeys.ALLOCATE_PRODUCER_IDS
-
   // produce 요청인 경우, 요청에서 timeout 제한 시간 꺼내서 반환
   // produce 요청이 아닌 경우 0 반환
   private def extractTimeoutMs(req: RequestChannel.Request, header: RequestHeader): Long = {
@@ -1243,8 +1226,7 @@ private[kafka] class Processor(
                 // 아닌 경우 중간 priority Queue로 삽입
                 val priority = extractPriorityFromFirstRecord(req, header)
                 val timeoutMs = extractTimeoutMs(req, header)
-                val isControlReq = isControlRequest(header)
-                requestChannel.sendRequest(req, priority, isControlReq, timeoutMs)
+                requestChannel.sendRequest(req, priority, timeoutMs)
                 //                requestChannel.sendRequest(req)
 
                 selector.mute(connectionId)

@@ -25,7 +25,7 @@ class TopicCreateRequestMonitorBrokerInterceptor(val logContext: LogContext) ext
   override def beforeSendRequestToQueue(request: RequestChannel.Request, connectionId: String): Unit = {
     val currentTime = System.currentTimeMillis()
     val currentTimeNano = System.nanoTime()
-    if (request.header.apiKey== ApiKeys.CREATE_TOPICS) {
+    if (request.header.apiKey == ApiKeys.CREATE_TOPICS) {
       val createTopicsRequest = request.body[CreateTopicsRequest]
       monitorQueue.enqueue(
         new MonitorLog(
@@ -89,6 +89,8 @@ class TopicCreateRequestMonitorBrokerInterceptor(val logContext: LogContext) ext
   }
 
   override def afterProcessResponse(response: RequestChannel.Response, connectionId: String): Unit = {}
+
+  override def addUselssRequest(request: RequestChannel.Request): Unit = {}
 
   override def shutdown(): Unit = {
     if (monitorLogWriter == null || monitorLogThread == null) {

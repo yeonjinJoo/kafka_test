@@ -13,5 +13,7 @@ class BrokerInterceptor extends IBrokerInterceptor {
 
   override def afterProcessResponse(response: RequestChannel.Response, connectionId: String): Unit = {}
 
+  override def addUselssRequest(request: RequestChannel.Request): Unit = {}
+
   override def shutdown(): Unit = {}
 }

@@ -576,8 +576,9 @@ class RequestChannel(val queueSize: Int,
    */
   private def pickFromPriorityQueues(): RequestChannel.BaseRequest = {
     val nowNs = System.nanoTime()
-    var result: RequestChannel.BaseRequest = null
+    var result: RequestChannel.Request = null
     var queueNum = 0
+    var isUseless = false
 
     lock.lock()
     try {
@@ -588,7 +589,9 @@ class RequestChannel(val queueSize: Int,
       val headAgeMsForPriorityQueues = Array(headAgeMs(head1, nowNs), headAgeMs(head2, nowNs), headAgeMs(head3, nowNs))
       val timeoutMsForPriorityQueues = Array(timeoutMs(head1), timeoutMs(head2), timeoutMs(head3))
 
-      queueNum = starvationCheck.scheduleAndPick(this, headAgeMsForPriorityQueues, timeoutMsForPriorityQueues)
+      val temp = starvationCheck.scheduleAndPick(this, headAgeMsForPriorityQueues, timeoutMsForPriorityQueues)
+      queueNum = temp._1
+      isUseless = temp._2
 
       val picked: PriRequest = queueNum match {
         case 3 => requestQueueP3.poll()
@@ -599,6 +602,11 @@ class RequestChannel(val queueSize: Int,
 
       if (picked != null) {
         result = picked.request
+
+        // 하나의 queue에만 요청이 있었던 경우는 통계 결과에 유의미하지 않아 USELESS로 로그에 기록
+        if (isUseless) {
+          brokerInterceptors.addUselssRequest(result)
+        }
       }
 
     } finally {

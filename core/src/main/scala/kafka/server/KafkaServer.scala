@@ -393,7 +393,7 @@ class KafkaServer(
 
         brokerInterceptors = new BrokerInterceptors(Vector(
           //          new MonitorLoggingBrokerInterceptor(logContext),
-          new MetadataRequestMonitorBrokerInterceptor(logContext),
+          //          new MetadataRequestMonitorBrokerInterceptor(logContext),
           new TopicCreateRequestMonitorBrokerInterceptor(logContext),
           new ProduceRequestMonitorBrokerInterceptor(logContext)
         ))

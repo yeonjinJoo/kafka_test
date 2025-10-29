@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -66,10 +66,11 @@ import scala.jdk.CollectionConverters._
  * A Kafka broker that runs in KRaft (Kafka Raft) mode.
  */
 class BrokerServer(
-  val sharedServer: SharedServer
-) extends KafkaBroker {
+                    val sharedServer: SharedServer
+                  ) extends KafkaBroker {
   val config: KafkaConfig = sharedServer.brokerConfig
   val time: Time = sharedServer.time
+
   def metrics: Metrics = sharedServer.metrics
 
   // Get raftManager from SharedServer. It will be initialized during startup.
@@ -260,12 +261,12 @@ class BrokerServer(
       unusedBrokerInterceptors = new BrokerInterceptors(Vector.empty)
 
       brokerInterceptors = new BrokerInterceptors(Vector(
-//        new MonitorLoggingBrokerInterceptor(logContext),
-        new MetadataRequestMonitorBrokerInterceptor(logContext),
+        //        new MonitorLoggingBrokerInterceptor(logContext),
+        //        new MetadataRequestMonitorBrokerInterceptor(logContext),
         new TopicCreateRequestMonitorBrokerInterceptor(logContext),
         new ProduceRequestMonitorBrokerInterceptor(logContext)
       ))
-//      brokerInterceptors = new BrokerInterceptors(Vector.empty)
+      //      brokerInterceptors = new BrokerInterceptors(Vector.empty)
       brokerInterceptors.init()
 
       // Create and start the socket server acceptor threads so that the bound port is known.
@@ -277,8 +278,8 @@ class BrokerServer(
 
       val listenerInfo = ListenerInfo.create(Optional.of(config.interBrokerListenerName.value()),
           config.effectiveAdvertisedBrokerListeners.map(_.toJava).asJava).
-            withWildcardHostnamesResolved().
-            withEphemeralPortsCorrected(name => socketServer.boundPort(new ListenerName(name)))
+        withWildcardHostnamesResolved().
+        withEphemeralPortsCorrected(name => socketServer.boundPort(new ListenerName(name)))
 
       alterPartitionManager = AlterPartitionManager(
         config,
@@ -475,7 +476,7 @@ class BrokerServer(
           config,
           sharedServer.metadataPublishingFaultHandler,
           dynamicConfigHandlers.toMap,
-        "broker"),
+          "broker"),
         new DynamicClientQuotaPublisher(
           config,
           sharedServer.metadataPublishingFaultHandler,
@@ -534,7 +535,7 @@ class BrokerServer(
       // completely sure.
       FutureUtils.waitWithLogging(logger.underlying, logIdent,
         "the initial broker metadata update to be published",
-        brokerMetadataPublisher.firstPublishFuture , startupDeadline, time)
+        brokerMetadataPublisher.firstPublishFuture, startupDeadline, time)
 
       // Now that we have loaded some metadata, we can log a reasonably up-to-date broker
       // configuration.  Keep in mind that KafkaConfig.originals is a mutable field that gets set

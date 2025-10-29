@@ -63,6 +63,8 @@ class MetadataRequestMonitorBrokerInterceptor(val logContext: LogContext) extend
     }
   }
 
+  override def addUselssRequest(request: RequestChannel.Request): Unit = {}
+
   override def shutdown(): Unit = {
     if (monitorLogWriter == null || monitorLogThread == null) {
       return

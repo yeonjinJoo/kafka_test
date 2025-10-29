@@ -10,6 +10,8 @@ import org.apache.kafka.common.utils.LogContext
 //import org.apache.kafka.common.record.Record
 
 import java.nio.charset.StandardCharsets
+import java.util.Set
+import java.util.concurrent.ConcurrentHashMap
 //import java.nio.ByteOrder
 
 import org.apache.kafka.common.header.Header
@@ -20,11 +22,13 @@ class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends
   private var monitorQueue: MonitorQueue = _
   private var monitorLogWriter: MonitorLogWriter = _
   private var monitorLogThread: Thread = _
+  private var uselessSet: Set[RequestChannel.Request] = _
 
   override def init(): Unit = {
     monitorQueue = new MonitorQueue()
     monitorLogWriter = new MonitorLogWriter(
       monitorQueue, new ScrapableConsoleMonitorLogWriteStrategy(), 1000)
+    uselessSet = ConcurrentHashMap.newKeySet[RequestChannel.Request]()
     monitorLogThread = new Thread(monitorLogWriter)
     monitorLogThread.start()
   }
@@ -54,10 +58,10 @@ class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends
 
             val priority: Int =
               header
-                .map(_.value())                                       // Option[Array[Byte]]
-                .filter(arr => arr != null && arr.length >= 4)        // 충분한 길이 확인 ( int로 변환 위함 )
-                .map(arr => ByteBuffer.wrap(arr).getInt())            // 바이트를 Int로
-                .getOrElse(0)                                         // 없으면 기본값 0
+                .map(_.value()) // Option[Array[Byte]]
+                .filter(arr => arr != null && arr.length >= 4) // 충분한 길이 확인 ( int로 변환 위함 )
+                .map(arr => ByteBuffer.wrap(arr).getInt()) // 바이트를 Int로
+                .getOrElse(0) // 없으면 기본값 0
 
             monitorQueue.enqueue(new MonitorLog(
               "PRODUCE",
@@ -81,6 +85,7 @@ class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends
     val currentTimeNano = System.nanoTime()
     if (response.request.header.apiKey == ApiKeys.PRODUCE) {
       val produceRequest = response.request.body[ProduceRequest]
+      val isUselss = uselessSet.remove(response.request)
       produceRequest.data().topicData().forEach(topic => topic.partitionData.forEach { partition =>
         val memoryRecords: MemoryRecords = partition.records.asInstanceOf[MemoryRecords]
         memoryRecords.batches.forEach(batch => {
@@ -99,11 +104,11 @@ class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends
             val headers: Array[Header] = record.headers()
             val header: Option[Header] = headers.reverse.find(_.key() == "priority")
 
-//            val priority: Int = if (header != null && header.value().length >= 4) {
-//              ByteBuffer.wrap(header.value()).getInt()
-//            } else {
-//              0
-//            }
+            //            val priority: Int = if (header != null && header.value().length >= 4) {
+            //              ByteBuffer.wrap(header.value()).getInt()
+            //            } else {
+            //              0
+            //            }
 
             val priority: Int =
               header
@@ -112,10 +117,11 @@ class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends
                 .map(arr => ByteBuffer.wrap(arr).getInt())
                 .getOrElse(0)
 
+
             monitorQueue.enqueue(new MonitorLog(
               "PRODUCE",
               messageId,
-              "COMMITED",
+              if (isUselss) "USELESS" else "COMMITED",
               priority,
               currentTime,
               currentTimeNano
@@ -128,6 +134,10 @@ class ProduceRequestMonitorBrokerInterceptor(val logContext: LogContext) extends
   }
 
   override def afterProcessResponse(response: RequestChannel.Response, connectionId: String): Unit = {}
+
+  override def addUselssRequest(request: RequestChannel.Request): Unit = {
+    uselessSet.add(request)
+  }
 
   override def shutdown(): Unit = {
     if (monitorLogWriter == null || monitorLogThread == null) {

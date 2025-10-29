@@ -13,5 +13,7 @@ trait IBrokerInterceptor {
 
   def afterProcessResponse(response: RequestChannel.Response, connectionId: String): Unit
 
+  def addUselssRequest(request: RequestChannel.Request): Unit
+
   def shutdown(): Unit
 }

@@ -25,13 +25,14 @@ class TopicCreateRequestMonitorBrokerInterceptor(val logContext: LogContext) ext
   override def beforeSendRequestToQueue(request: RequestChannel.Request, connectionId: String): Unit = {
     val currentTime = System.currentTimeMillis()
     val currentTimeNano = System.nanoTime()
-    if (request.header.apiKey== ApiKeys.CREATE_TOPICS) {
+    if (request.header.apiKey == ApiKeys.CREATE_TOPICS) {
       val createTopicsRequest = request.body[CreateTopicsRequest]
       monitorQueue.enqueue(
         new MonitorLog(
           "CREATE_TOPIC",
           String.join(",", createTopicsRequest.data().topics().stream().map(_.name()).collect(Collectors.toList())),
           "REQUESTED",
+          Integer.valueOf(0),
           currentTime,
           currentTimeNano
         )
@@ -44,6 +45,7 @@ class TopicCreateRequestMonitorBrokerInterceptor(val logContext: LogContext) ext
           "DELETE_TOPIC",
           String.join(",", deleteTopicsRequest.data().topics().stream().map(_.name()).collect(Collectors.toList())),
           "REQUESTED",
+          Integer.valueOf(0),
           currentTime,
           currentTimeNano
         )
@@ -64,6 +66,7 @@ class TopicCreateRequestMonitorBrokerInterceptor(val logContext: LogContext) ext
           "CREATE_TOPIC",
           String.join(",", createTopicsRequest.data().topics().stream().map(_.name()).collect(Collectors.toList())),
           "COMPLETED",
+          Integer.valueOf(0),
           currentTime,
           currentTimeNano
         )
@@ -76,6 +79,7 @@ class TopicCreateRequestMonitorBrokerInterceptor(val logContext: LogContext) ext
           "DELETE_TOPIC",
           String.join(",", deleteTopicsRequest.data().topics().stream().map(_.name()).collect(Collectors.toList())),
           "COMPLETED",
+          Integer.valueOf(0),
           currentTime,
           currentTimeNano
         )
@@ -85,6 +89,8 @@ class TopicCreateRequestMonitorBrokerInterceptor(val logContext: LogContext) ext
   }
 
   override def afterProcessResponse(response: RequestChannel.Response, connectionId: String): Unit = {}
+
+  override def addUselssRequest(request: RequestChannel.Request): Unit = {}
 
   override def shutdown(): Unit = {
     if (monitorLogWriter == null || monitorLogThread == null) {

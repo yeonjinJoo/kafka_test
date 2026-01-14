@@ -1,7 +1,9 @@
 package kafka.monitor.writer;
 
 import kafka.monitor.MonitorLog;
+
 import org.apache.kafka.common.utils.LogContext;
+
 import org.slf4j.Logger;
 
 public class ConsoleMonitorLogWriteStrategy implements IMonitorLogWriteStrategy {
@@ -23,12 +25,12 @@ public class ConsoleMonitorLogWriteStrategy implements IMonitorLogWriteStrategy 
     public void write(MonitorLog log) {
         String id = log.getId().length() > 50 ? log.getId().substring(0, 50) : log.getId();
         if (needNanoTime) {
-            logger.info("MonitorLog -- Type: {}, Id: {}, Timestamp: {}, TimestampNano: {}, State: {}",
-                    log.getType(), id, prettierTimestamp(log.getTimestamp()), prettierTimestampNano(log.getTimestampNano()), log.getState());
+            logger.info("MonitorLog -- Type: {}, Id: {}, Priority: {}, Timestamp: {}, TimestampNano: {}, State: {}",
+                    log.getType(), id, log.priority(), prettierTimestamp(log.getTimestamp()), prettierTimestampNano(log.getTimestampNano()), log.getState());
             return;
         }
-        logger.info("MonitorLog -- Type: {}, Id: {}, Timestamp: {}, State: {}",
-                log.getType(), id, prettierTimestamp(log.getTimestamp()), log.getState());
+        logger.info("MonitorLog -- Type: {}, Id: {}, Priority: {}, Timestamp: {}, State: {}",
+                log.getType(), id, log.priority(), prettierTimestamp(log.getTimestamp()), log.getState());
     }
 
     private String prettierTimestamp(long timestamp) {

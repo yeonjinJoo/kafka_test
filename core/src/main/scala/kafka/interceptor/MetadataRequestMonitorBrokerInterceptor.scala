@@ -33,6 +33,7 @@ class MetadataRequestMonitorBrokerInterceptor(val logContext: LogContext) extend
           "METADATA",
           extractTopicNames(metadataRequest),
           "REQUESTED",
+          Integer.valueOf(0),
           currentTime,
           currentTimeNano
         )
@@ -53,6 +54,7 @@ class MetadataRequestMonitorBrokerInterceptor(val logContext: LogContext) extend
           "METADATA",
           extractTopicNames(metadataRequest),
           "COMPLETED",
+          Integer.valueOf(0),
           currentTime,
           currentTimeNano
         )
@@ -60,6 +62,8 @@ class MetadataRequestMonitorBrokerInterceptor(val logContext: LogContext) extend
       monitorLogWriter.notifyIfNeeded()
     }
   }
+
+  override def addUselssRequest(request: RequestChannel.Request): Unit = {}
 
   override def shutdown(): Unit = {
     if (monitorLogWriter == null || monitorLogThread == null) {

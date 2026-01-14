@@ -184,7 +184,6 @@ public class ProducerRecord<K, V> {
     public Integer partition() {
         return partition;
     }
-
     @Override
     public String toString() {
         String headers = this.headers == null ? "null" : this.headers.toString();

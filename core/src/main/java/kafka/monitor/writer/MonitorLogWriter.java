@@ -5,75 +5,75 @@ import kafka.monitor.MonitorQueue;
 // TODO: 일정 시간동안 monitorQueue에 있는 데이터가 flush안되면 자동으로 flush해주는 기능 추가하기
 public class MonitorLogWriter implements Runnable {
 
-  private final MonitorQueue monitorQueue;
-  
-  private final IMonitorLogWriteStrategy writeStrategy;
-  
-  private final int batchSize;
+    private final MonitorQueue monitorQueue;
 
-  private boolean terminated = false;
+    private final IMonitorLogWriteStrategy writeStrategy;
 
-  private int curWrittenCnt = 0;
+    private final int batchSize;
 
-  public MonitorLogWriter(MonitorQueue monitorQueue, IMonitorLogWriteStrategy writeStrategy, int batchSize) {
-    this.monitorQueue = monitorQueue;
-    this.writeStrategy = writeStrategy;
-    this.batchSize = batchSize;
-  }
+    private boolean terminated = false;
 
-  public void gracefulShutdown() {
-    terminated = true;
-  }
+    private int curWrittenCnt = 0;
 
-  public void syncedWait() {
-    synchronized (this) {
-      try {
-        wait();
-      } catch (InterruptedException e) {
-        e.printStackTrace();
-      }
+    public MonitorLogWriter(MonitorQueue monitorQueue, IMonitorLogWriteStrategy writeStrategy, int batchSize) {
+        this.monitorQueue = monitorQueue;
+        this.writeStrategy = writeStrategy;
+        this.batchSize = batchSize;
     }
-  }
 
-  public void syncedNotify() {
-    synchronized (this) {
-      notify();
+    public void gracefulShutdown() {
+        terminated = true;
     }
-  }
 
-  public void notifyIfNeeded() {
-    if (monitorQueue.size() >= batchSize) {
-      syncedNotify();
+    public void syncedWait() {
+        synchronized (this) {
+            try {
+                wait();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
     }
-  }
 
-  @Override
-  public void run() {
-    while (!(terminated && monitorQueue.isEmpty())) {
-      if (!terminated && monitorQueue.isEmpty()) {
-        syncedWait();
-      }
-      if (!monitorQueue.isEmpty()) {
-        writeStrategy.write(monitorQueue.dequeue());
-        curWrittenCnt += 1;
-      }
-      tryFlushBatch();
+    public void syncedNotify() {
+        synchronized (this) {
+            notify();
+        }
     }
-    flushBatch();
-  }
 
-  private void tryFlushBatch() {
-    if (curWrittenCnt >= batchSize) {
-      flushBatch();
-      if (!terminated && monitorQueue.size() < batchSize) {
-        syncedWait();
-      }
+    public void notifyIfNeeded() {
+        if (monitorQueue.size() >= batchSize) {
+            syncedNotify();
+        }
     }
-  }
 
-  private void flushBatch() {
-    writeStrategy.commit();
-    curWrittenCnt = 0;
-  }
+    @Override
+    public void run() {
+        while (!(terminated && monitorQueue.isEmpty())) {
+            if (!terminated && monitorQueue.isEmpty()) {
+                syncedWait();
+            }
+            if (!monitorQueue.isEmpty()) {
+                writeStrategy.write(monitorQueue.dequeue());
+                curWrittenCnt += 1;
+            }
+            tryFlushBatch();
+        }
+        flushBatch();
+    }
+
+    private void tryFlushBatch() {
+        if (curWrittenCnt >= batchSize) {
+            flushBatch();
+            if (!terminated && monitorQueue.size() < batchSize) {
+                syncedWait();
+            }
+        }
+    }
+
+    private void flushBatch() {
+        writeStrategy.commit();
+        curWrittenCnt = 0;
+    }
 
 }

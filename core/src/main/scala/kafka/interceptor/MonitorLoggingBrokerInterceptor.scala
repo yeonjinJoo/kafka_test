@@ -63,6 +63,7 @@ class MonitorLoggingBrokerInterceptor(val logContext: LogContext) extends IBroke
           api,
           curNum.toString,
           "REQUESTED",
+          Integer.valueOf(0),
           ts.requestedTime,
           ts.requestedTimeNano
         ))
@@ -70,11 +71,12 @@ class MonitorLoggingBrokerInterceptor(val logContext: LogContext) extends IBroke
           api,
           curNum.toString,
           "COMPLETED",
+          Integer.valueOf(0),
           ts.completedTime,
           ts.completedTimeNano
         ))
         monitorLogWriter.notifyIfNeeded()
-//        println(s"Request $api-$curNum latencyNano: ${ts.completedTimeNano - ts.requestedTimeNano} ms")
+      //        println(s"Request $api-$curNum latencyNano: ${ts.completedTimeNano - ts.requestedTimeNano} ms")
       case None =>
     }
 
@@ -89,6 +91,7 @@ class MonitorLoggingBrokerInterceptor(val logContext: LogContext) extends IBroke
               "PRODUCE",
               messageId,
               "COMMITED",
+              Integer.valueOf(0),
               currentTime,
               currentTimeNano
             ))
@@ -100,6 +103,8 @@ class MonitorLoggingBrokerInterceptor(val logContext: LogContext) extends IBroke
   }
 
   override def afterProcessResponse(response: RequestChannel.Response, connectionId: String): Unit = {}
+
+  override def addUselssRequest(request: RequestChannel.Request): Unit = {}
 
   override def shutdown(): Unit = {
     if (monitorLogWriter == null || monitorLogThread == null) {

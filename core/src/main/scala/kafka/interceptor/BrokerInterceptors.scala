@@ -25,6 +25,10 @@ class BrokerInterceptors(val interceptors: Vector[IBrokerInterceptor]) {
     interceptors.foreach(_.afterProcessResponse(response, connectionId))
   }
 
+  def addUselssRequest(request: RequestChannel.Request): Unit = {
+    interceptors.foreach(_.addUselssRequest(request))
+  }
+
   def shutdown(): Unit = {
     interceptors.foreach(_.shutdown())
   }

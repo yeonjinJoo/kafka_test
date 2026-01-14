@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.typesafe.scalalogging.Logger
 import com.yammer.metrics.core.{Histogram, Meter}
 import kafka.interceptor.BrokerInterceptors
+import kafka.priorityscheduling.StarvationCheck
 import kafka.network
 import kafka.server.{KafkaConfig, RequestLocal}
 import kafka.utils.{Logging, Pool}
@@ -39,6 +40,7 @@ import org.apache.kafka.network.Session
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 
 import java.util
+import java.util.concurrent.locks.ReentrantLock
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.reflect.ClassTag
@@ -51,15 +53,19 @@ object RequestChannel extends Logging {
   val ProcessorMetricTag = "processor"
 
   /**
-    * Deprecated protocol apis are logged at info level while the rest are logged at debug level.
-    * That makes it possible to enable the former without enabling latter.
-    */
+   * Deprecated protocol apis are logged at info level while the rest are logged at debug level.
+   * That makes it possible to enable the former without enabling latter.
+   */
   private def isRequestLoggingEnabled(header: RequestHeader): Boolean = requestLogger.underlying.isDebugEnabled ||
     (requestLogger.underlying.isInfoEnabled && header.isApiVersionDeprecated())
 
   sealed trait BaseRequest
+
   case object ShutdownRequest extends BaseRequest
+
   case object WakeupRequest extends BaseRequest
+
+  case object RequestInserted extends BaseRequest
 
   class Metrics(enabledApis: Iterable[ApiKeys]) {
     def this(scope: ListenerType) = {
@@ -76,12 +82,17 @@ object RequestChannel extends Logging {
     def apply(metricName: String): RequestMetrics = metricsMap(metricName)
 
     def close(): Unit = {
-       metricsMap.values.foreach(_.removeMetrics())
+      metricsMap.values.foreach(_.removeMetrics())
     }
   }
 
   case class CallbackRequest(fun: RequestLocal => Unit,
                              originalRequest: Request) extends BaseRequest
+
+  // wrapper class for priority request - add enqueue time
+  case class PriRequest(request: RequestChannel.Request,
+                        timeoutMs: Long,
+                        enqueueNs: Long = System.nanoTime())
 
   class Request(val processor: Int,
                 val context: RequestContext,
@@ -247,7 +258,7 @@ object RequestChannel extends Logging {
             else RequestMetrics.consumerFetchMetricName
           Seq(specifiedMetricName, header.apiKey.name)
         } else if (header.apiKey == ApiKeys.ADD_PARTITIONS_TO_TXN && body[AddPartitionsToTxnRequest].allVerifyOnlyRequest) {
-            Seq(RequestMetrics.verifyPartitionsInTxnMetricName)
+          Seq(RequestMetrics.verifyPartitionsInTxnMetricName)
         } else {
           Seq(header.apiKey.name)
         }
@@ -360,24 +371,45 @@ class RequestChannel(val queueSize: Int,
                      val metricNamePrefix: String,
                      time: Time,
                      val metrics: RequestChannel.Metrics,
-                     val brokerInterceptors: BrokerInterceptors = new BrokerInterceptors(Vector.empty)) {
+                     val brokerInterceptors: BrokerInterceptors = new BrokerInterceptors(Vector.empty),
+                     val starvationCheck: StarvationCheck = new StarvationCheck()
+                    ) {
+
   import RequestChannel._
 
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
+  // requestQueue for WakeupRequest & RequestInserted & ShutdownRequest
+  // handler가 requestQueue에서 poll하며 block 되게한다.
+  // priorityQueues 중 하나에 요청이 들어오면 RequestInserted, callbackQueue 요청이 들어오면 requestQueue에 WakeupRequest가 추가되며 handler가 깨어난다.
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
   private val processors = new ConcurrentHashMap[Int, Processor]()
   private val requestQueueSizeMetricName = metricNamePrefix.concat(RequestQueueSizeMetric)
   private val responseQueueSizeMetricName = metricNamePrefix.concat(ResponseQueueSizeMetric)
   private val callbackQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
 
+  // requestQueue for priority 1 ~ 3
+  private val requestQueueP1 = new ArrayBlockingQueue[PriRequest](queueSize)
+  private val requestQueueP2 = new ArrayBlockingQueue[PriRequest](queueSize)
+  private val requestQueueP3 = new ArrayBlockingQueue[PriRequest](queueSize)
+
+  // lock for decide which queue to process
+  private val lock = new ReentrantLock()
+
   metricsGroup.newGauge(requestQueueSizeMetricName, () => requestQueue.size)
 
   metricsGroup.newGauge(responseQueueSizeMetricName, () => {
-    processors.values.asScala.foldLeft(0) {(total, processor) =>
+    processors.values.asScala.foldLeft(0) { (total, processor) =>
       total + processor.responseQueueSize
     }
   })
+
+  // 다른 class에서 queue size 체크 위해 getter 추가
+  def getRequestQueueP1Size(): Int = requestQueueP1.size
+
+  def getRequestQueueP2Size(): Int = requestQueueP2.size
+
+  def getRequestQueueP3Size(): Int = requestQueueP3.size
 
   def addProcessor(processor: Processor): Unit = {
     if (processors.putIfAbsent(processor.id, processor) != null)
@@ -392,15 +424,23 @@ class RequestChannel(val queueSize: Int,
     metricsGroup.removeMetric(responseQueueSizeMetricName, Map(ProcessorMetricTag -> processorId.toString).asJava)
   }
 
-  /** Send a request to be handled, potentially blocking until there is room in the queue for the request */
-  def sendRequest(request: RequestChannel.Request): Unit = {
-    requestQueue.put(request)
+  // Produce 요청은 이 함수에서 제어. client 측에서 priority를 생성해서 보내므로 1 ~ 3 인 request만 존재
+  def sendRequest(request: RequestChannel.Request, priority: Int, timeoutMs: Long): Unit = {
+    val wrapped = new PriRequest(request, timeoutMs)
+    priority match {
+      case 3 => requestQueueP3.put(wrapped)
+      case 2 => requestQueueP2.put(wrapped)
+      case 1 => requestQueueP1.put(wrapped)
+    }
+    // 요청이 PriorityQueue 중 하나에 추가되었으면 requestQueue에서 poll 하며 블락된 handler를 깨우기 위해 requestQueue에 WakeupRequest (알람역할) 추가
+    // 깨운 뒤 priority scheduling 진행
+    requestQueue.put(RequestInserted)
   }
 
   def closeConnection(
-    request: RequestChannel.Request,
-    errorCounts: java.util.Map[Errors, Integer]
-  ): Unit = {
+                       request: RequestChannel.Request,
+                       errorCounts: java.util.Map[Errors, Integer]
+                     ): Unit = {
     // This case is used when the request handler has encountered an error, but the client
     // does not expect a response (e.g. when produce request has acks set to 0)
     updateErrorMetrics(request.header.apiKey, errorCounts.asScala)
@@ -408,10 +448,10 @@ class RequestChannel(val queueSize: Int,
   }
 
   def sendResponse(
-    request: RequestChannel.Request,
-    response: AbstractResponse,
-    onComplete: Option[Send => Unit]
-  ): Unit = {
+                    request: RequestChannel.Request,
+                    response: AbstractResponse,
+                    onComplete: Option[Send => Unit]
+                  ): Unit = {
     updateErrorMetrics(request.header.apiKey, response.errorCounts.asScala)
     sendResponse(new RequestChannel.SendResponse(
       request,
@@ -477,8 +517,13 @@ class RequestChannel(val queueSize: Int,
   }
 
   /** Get the next request or block until specified time has elapsed
-   *  Check the callback queue and execute first if present since these
-   *  requests have already waited in line. */
+   * Check the callback queue and execute first if present since these
+   * requests have already waited in line. */
+
+  // priority 스케쥴링 알고리즘 추가 적용
+  // KafkaRequestHandler 측에서 null이 반환된 경우 아무것도 하지 않고 continue 하기 때문에 null 반환해도 괜찮다
+  // requestQueue에 들어가는 요청은 WakeupRequest, RequestInserted, ShutdownRequest 뿐이다
+  // request 처리 KafkaRequestHandler.scala line 123 ~ 확인
   def receiveRequest(timeout: Long): RequestChannel.BaseRequest = {
     val callbackRequest = callbackQueue.poll()
     if (callbackRequest != null)
@@ -487,9 +532,88 @@ class RequestChannel(val queueSize: Int,
       val request = requestQueue.poll(timeout, TimeUnit.MILLISECONDS)
       request match {
         case WakeupRequest => callbackQueue.poll()
+        case RequestInserted => pickFromPriorityQueues()
         case _ => request
       }
     }
+  }
+
+  /**
+   * 해당 요청이 Queue에 들어온지 얼마나 지났는지 계산해서 반환한다(ms).
+   *
+   * @param request PriRequest - 들어온지 얼마나 지났는지 확인하고 싶은 요청
+   * @param nowNs   Long - 현재 시간(ns)
+   * @return 해당 요청의 들어온지 얼마나 지났는지 or 요청이 null인 경우 -1
+   */
+  private def headAgeMs(request: PriRequest, nowNs: Long): Long = {
+    if (request != null) {
+      (nowNs - request.enqueueNs) / 1_000_000
+    }
+    else {
+      -1L
+    }
+  }
+
+  /**
+   * 해당 요청의 timeout 조건 값이 얼마인지 확인해서 반환한다(ms).
+   *
+   * @param request PriRequest - timeout 조건 값이 얼마인지 확인하고 싶은 요청
+   * @return 해당 요청의 timeout 조건 값 or 모르는 경우 -1
+   */
+  private def timeoutMs(request: PriRequest): Long = {
+    if (request != null) {
+      request.timeoutMs
+    }
+    else {
+      -1L
+    }
+  }
+
+  /**
+   * 우선순위 큐(P1~P3)에서 다음 처리할 요청을 선택해 반환한다.
+   *
+   * @return 선택된 큐에서 꺼낸 요청, 모든 큐가 비어 있으면 null
+   */
+  private def pickFromPriorityQueues(): RequestChannel.BaseRequest = {
+    val nowNs = System.nanoTime()
+    var result: RequestChannel.Request = null
+    var queueNum = 0
+    var isUseless = false
+
+    lock.lock()
+    try {
+      val head1 = requestQueueP1.peek()
+      val head2 = requestQueueP2.peek()
+      val head3 = requestQueueP3.peek()
+
+      val headAgeMsForPriorityQueues = Array(headAgeMs(head1, nowNs), headAgeMs(head2, nowNs), headAgeMs(head3, nowNs))
+      val timeoutMsForPriorityQueues = Array(timeoutMs(head1), timeoutMs(head2), timeoutMs(head3))
+
+      val temp = starvationCheck.scheduleAndPick(this, headAgeMsForPriorityQueues, timeoutMsForPriorityQueues)
+      queueNum = temp._1
+      isUseless = temp._2
+
+      val picked: PriRequest = queueNum match {
+        case 3 => requestQueueP3.poll()
+        case 2 => requestQueueP2.poll()
+        case 1 => requestQueueP1.poll()
+        case _ => null
+      }
+
+      if (picked != null) {
+        result = picked.request
+
+        // 하나의 queue에만 요청이 있었던 경우는 통계 결과에 유의미하지 않아 USELESS로 로그에 기록
+        if (isUseless) {
+          brokerInterceptors.addUselssRequest(result)
+        }
+      }
+
+    } finally {
+      lock.unlock()
+    }
+
+    result
   }
 
   /** Get the next request or block until there is one */
@@ -504,6 +628,9 @@ class RequestChannel(val queueSize: Int,
 
   def clear(): Unit = {
     requestQueue.clear()
+    requestQueueP1.clear()
+    requestQueueP2.clear()
+    requestQueueP3.clear()
     callbackQueue.clear()
   }
 
@@ -623,7 +750,7 @@ class RequestMetrics(name: String) {
       else {
         synchronized {
           if (meter == null)
-             meter = metricsGroup.newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
+            meter = metricsGroup.newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
           meter
         }
       }
